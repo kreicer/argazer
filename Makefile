@@ -1,12 +1,11 @@
-# Makefile for Watcher
+# Makefile for Argazer
 
 # Variables
-APP_NAME := watcher
+APP_NAME := argazer
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 DOCKER_IMAGE := $(APP_NAME):$(VERSION)
-K8S_NAMESPACE := watcher
 
 # Go parameters
 GOCMD := go
@@ -19,7 +18,7 @@ GOMOD := $(GOCMD) mod
 # Build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build clean test deps run docker-build docker-push k8s-deploy k8s-clean help
+.PHONY: all build clean test deps run docker-build docker-push help
 
 # Default target
 all: clean deps test build
@@ -63,28 +62,6 @@ docker-push:
 	docker push $(DOCKER_IMAGE)
 	docker push $(APP_NAME):latest
 
-# Deploy to Kubernetes
-k8s-deploy:
-	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/
-	@echo "Deployment complete. Don't forget to update the secret with your Telegram credentials:"
-	@echo "kubectl create secret generic watcher-secrets \\"
-	@echo "  --from-literal=telegram-webhook=\"https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage\" \\"
-	@echo "  --from-literal=telegram-chat-id=\"<YOUR_CHAT_ID>\" \\"
-	@echo "  --namespace=$(K8S_NAMESPACE) \\"
-	@echo "  --dry-run=client -o yaml | kubectl apply -f -"
-
-# Clean Kubernetes resources
-k8s-clean:
-	@echo "Cleaning Kubernetes resources..."
-	kubectl delete -f k8s/ --ignore-not-found=true
-
-# Check Kubernetes deployment
-k8s-status:
-	@echo "Checking deployment status..."
-	kubectl get pods -n $(K8S_NAMESPACE)
-	kubectl logs -f deployment/$(APP_NAME) -n $(K8S_NAMESPACE)
-
 # Format code
 fmt:
 	@echo "Formatting code..."
@@ -118,9 +95,6 @@ help:
 	@echo "  run          - Run the application locally"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-push  - Push Docker image"
-	@echo "  k8s-deploy   - Deploy to Kubernetes"
-	@echo "  k8s-clean    - Clean Kubernetes resources"
-	@echo "  k8s-status   - Check Kubernetes deployment status"
 	@echo "  fmt          - Format code"
 	@echo "  lint         - Lint code"
 	@echo "  security     - Run security scan"

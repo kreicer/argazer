@@ -63,7 +63,7 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 	}
 
 	// Set headers
-	req.Header.Set("User-Agent", "watcher/1.0")
+	req.Header.Set("User-Agent", "argazer/1.0")
 	req.Header.Set("Accept", "application/x-yaml, application/yaml, text/yaml")
 
 	// Make request

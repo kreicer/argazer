@@ -62,7 +62,7 @@ func (n *TelegramNotifier) sendMessage(ctx context.Context, message string) erro
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "watcher/1.0")
+	req.Header.Set("User-Agent", "argazer/1.0")
 
 	n.logger.WithFields(logrus.Fields{
 		"chat_id": n.chatID,

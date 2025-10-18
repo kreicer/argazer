@@ -86,6 +86,7 @@ func (e *EmailNotifier) sendWithTLS(addr string, auth smtp.Auth, body []byte) er
 	// Start TLS
 	tlsConfig := &tls.Config{
 		ServerName: e.smtpHost,
+		MinVersion: tls.VersionTLS12, // Require TLS 1.2 or higher for security
 	}
 	if err := client.StartTLS(tlsConfig); err != nil {
 		return fmt.Errorf("failed to start TLS: %w", err)
