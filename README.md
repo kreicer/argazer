@@ -122,6 +122,44 @@ export AG_VERBOSE="false"
 export AG_SOURCE_NAME="chart-repo"
 ```
 
+## ArgoCD RBAC Setup
+
+Argazer requires minimal read-only permissions in ArgoCD. Create a dedicated user with the following RBAC policy:
+
+```yaml
+# argocd-cm ConfigMap - Create the user
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  accounts.argazer: apiKey, login
+```
+
+```yaml
+# argocd-rbac-cm ConfigMap - Set permissions
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  policy.csv: |
+    # Allow listing and reading applications
+    p, role:argazer-reader, applications, get, */*, allow
+    p, role:argazer-reader, applications, list, */*, allow
+    g, argazer, role:argazer-reader
+```
+
+Set the user password:
+
+```bash
+argocd account update-password --account argazer --new-password <secure-password>
+```
+
+For project-specific access, replace `*/*` with `<project-name>/*` in the RBAC policy.
+
 ## Usage
 
 ### Basic Usage
