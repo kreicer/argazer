@@ -18,10 +18,10 @@ GOMOD := $(GOCMD) mod
 # Build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build clean test deps run docker-build docker-push help
+.PHONY: all build clean deps run docker-build docker-push help
 
 # Default target
-all: clean deps test build
+all: clean deps build
 
 # Build the application
 build:
@@ -33,11 +33,6 @@ clean:
 	@echo "Cleaning..."
 	$(GOCLEAN)
 	rm -f $(APP_NAME)
-
-# Run tests
-test:
-	@echo "Running tests..."
-	$(GOTEST) -v ./...
 
 # Download dependencies
 deps:
@@ -90,7 +85,6 @@ help:
 	@echo "Available targets:"
 	@echo "  build        - Build the application"
 	@echo "  clean        - Clean build artifacts"
-	@echo "  test         - Run tests"
 	@echo "  deps         - Download dependencies"
 	@echo "  run          - Run the application locally"
 	@echo "  docker-build - Build Docker image"

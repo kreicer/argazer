@@ -1,3 +1,5 @@
+![Claude Assisted](https://img.shields.io/badge/Made%20with-Claude-8A2BE2?logo=anthropic)
+
 # Argazer
 
 **Argazer** (a wordplay on "Argo" and "gazer") is a lightweight tool that monitors your ArgoCD applications for Helm chart updates. It connects to ArgoCD via API, scans your applications, and notifies you when newer versions are available.
@@ -391,31 +393,23 @@ go build -o argazer .
 
 ## CI/CD Integration
 
-### GitLab CI
-
-```yaml
-argazer-check:
-  stage: check
-  script:
-    - ./argazer --config config.yaml
-  only:
-    - schedules
-```
-
 ### GitHub Actions
 
+To run Argazer on a schedule (e.g., check for updates every 6 hours):
+
 ```yaml
-name: Argazer Check
+name: Check Helm Updates
 on:
   schedule:
     - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
       - name: Run Argazer
+        uses: docker://ghcr.io/<owner>/<repo>:latest
         env:
           AG_ARGOCD_URL: ${{ secrets.ARGOCD_URL }}
           AG_ARGOCD_USERNAME: ${{ secrets.ARGOCD_USERNAME }}
@@ -423,7 +417,27 @@ jobs:
           AG_NOTIFICATION_CHANNEL: telegram
           AG_TELEGRAM_WEBHOOK: ${{ secrets.TELEGRAM_WEBHOOK }}
           AG_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: ./argazer
+          AG_PROJECTS: production
+          AG_LABELS: type=operator
+```
+
+### GitLab CI
+
+```yaml
+argazer-check:
+  stage: check
+  image: ghcr.io/your-org/argazer:latest
+  script:
+    - argazer
+  variables:
+    AG_ARGOCD_URL: ${ARGOCD_URL}
+    AG_ARGOCD_USERNAME: ${ARGOCD_USERNAME}
+    AG_ARGOCD_PASSWORD: ${ARGOCD_PASSWORD}
+    AG_NOTIFICATION_CHANNEL: telegram
+    AG_TELEGRAM_WEBHOOK: ${TELEGRAM_WEBHOOK}
+    AG_TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+  only:
+    - schedules
 ```
 
 ## Troubleshooting
