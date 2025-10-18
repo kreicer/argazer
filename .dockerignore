@@ -1,0 +1,52 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+README.md
+
+# Build artifacts
+argazer
+watcher
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+for_tests/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+watcher.log
+watcher_fixed.log
+
+# Config files (will be mounted or passed via env)
+config.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes manifests
+k8s/
+
+# CI/CD
+.gitlab-ci.yml
+.github/
+
+# Scripts
+setup.sh
+setup.bat
+Makefile
+

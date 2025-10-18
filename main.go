@@ -1,0 +1,478 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"argazer/internal/argocd"
+	"argazer/internal/config"
+	"argazer/internal/helm"
+	"argazer/internal/notification"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
+func main() {
+	var rootCmd = &cobra.Command{
+		Use:   "argazer",
+		Short: "ArgoCD Application Gazer - Monitor Helm chart versions in ArgoCD applications",
+		Long: `Argazer connects to ArgoCD via API and checks all applications for Helm chart updates.
+It can filter by projects, application names, and labels, and send notifications via Telegram or Email.`,
+		RunE: run,
+	}
+
+	// Add version command
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("argazer version %s (commit: %s)\n", version, commit)
+		},
+	})
+
+	// Add flags
+	rootCmd.Flags().StringP("config", "c", "", "Configuration file path")
+	rootCmd.Flags().String("argocd-url", "", "ArgoCD server URL")
+	rootCmd.Flags().String("argocd-username", "", "ArgoCD username")
+	rootCmd.Flags().String("argocd-password", "", "ArgoCD password")
+	rootCmd.Flags().Bool("argocd-insecure", false, "Skip TLS verification")
+	rootCmd.Flags().StringSlice("projects", []string{"*"}, "Projects to check (comma-separated, or '*' for all)")
+	rootCmd.Flags().StringSlice("app-names", []string{"*"}, "Application names to check (comma-separated, or '*' for all)")
+	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', or empty for console only")
+	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
+
+	// Bind flags to viper
+	viper.BindPFlags(rootCmd.Flags())
+
+	if err := rootCmd.Execute(); err != nil {
+		logrus.Fatal(err)
+	}
+}
+
+func run(cmd *cobra.Command, args []string) error {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Set up logging
+	logger := setupLogging(cfg.Verbose)
+
+	logger.WithFields(logrus.Fields{
+		"argocd_url":   cfg.ArgocdURL,
+		"projects":     cfg.Projects,
+		"app_names":    cfg.AppNames,
+		"labels":       cfg.Labels,
+		"notification": cfg.NotificationChannel,
+		"version":      version,
+	}).Info("Starting Argazer")
+
+	ctx := context.Background()
+
+	// Initialize clients
+	clients, err := initializeClients(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	// Fetch applications from ArgoCD
+	apps, err := fetchApplications(ctx, clients.argocd, cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	// Check applications for updates (with concurrency)
+	results := checkApplicationsConcurrently(ctx, apps, clients.helm, cfg, logger)
+
+	// Output results to console
+	outputResults(results)
+
+	// Send notifications if configured
+	if clients.notifier != nil {
+		if err := sendNotifications(ctx, clients.notifier, results, logger); err != nil {
+			logger.WithError(err).Warn("Failed to send notifications")
+		}
+	}
+
+	logger.WithField("total_checked", len(results)).Info("Argazer completed")
+
+	return nil
+}
+
+// clients holds all initialized clients
+type clients struct {
+	argocd   *argocd.Client
+	helm     *helm.Checker
+	notifier notification.Notifier
+}
+
+// initializeClients creates all required clients (ArgoCD, Helm, Notifier)
+func initializeClients(ctx context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
+	c := &clients{}
+
+	// Create ArgoCD API client
+	argoLogger := logger.WithField("component", "argocd")
+	argoClient, err := argocd.NewClient(cfg.ArgocdURL, cfg.ArgocdUsername, cfg.ArgocdPassword, cfg.ArgocdInsecure, argoLogger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ArgoCD client: %w", err)
+	}
+	c.argocd = argoClient
+
+	// Create helm checker
+	helmLogger := logger.WithField("component", "helm")
+	helmChecker, err := helm.NewChecker(helmLogger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create helm checker: %w", err)
+	}
+	c.helm = helmChecker
+
+	// Create notifier based on configuration
+	if cfg.NotificationChannel != "" {
+		notifierLogger := logger.WithField("component", "notifier")
+		var notifier notification.Notifier
+
+		switch cfg.NotificationChannel {
+		case "telegram":
+			notifier = notification.NewTelegramNotifier(cfg.TelegramWebhook, cfg.TelegramChatID, notifierLogger)
+			logger.Info("Using Telegram notifications")
+		case "email":
+			notifier = notification.NewEmailNotifier(
+				cfg.EmailSmtpHost,
+				cfg.EmailSmtpPort,
+				cfg.EmailSmtpUsername,
+				cfg.EmailSmtpPassword,
+				cfg.EmailFrom,
+				cfg.EmailTo,
+				cfg.EmailUseTLS,
+				notifierLogger,
+			)
+			logger.Info("Using Email notifications")
+		default:
+			logger.Warnf("Unknown notification channel: %s", cfg.NotificationChannel)
+		}
+
+		c.notifier = notifier
+	}
+
+	return c, nil
+}
+
+// fetchApplications retrieves applications from ArgoCD based on filters
+func fetchApplications(ctx context.Context, client *argocd.Client, cfg *config.Config, logger *logrus.Entry) ([]*v1alpha1.Application, error) {
+	apps, err := client.ListApplications(ctx, argocd.FilterOptions{
+		Projects: cfg.Projects,
+		AppNames: cfg.AppNames,
+		Labels:   cfg.Labels,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list applications: %w", err)
+	}
+
+	logger.WithField("count", len(apps)).Info("Found applications")
+	return apps, nil
+}
+
+// ApplicationCheckResult holds the result of checking an application
+type ApplicationCheckResult struct {
+	AppName        string
+	Project        string
+	ChartName      string
+	CurrentVersion string
+	LatestVersion  string
+	RepoURL        string
+	HasUpdate      bool
+	Error          error
+}
+
+// checkApplicationsConcurrently checks multiple applications in parallel using a worker pool
+func checkApplicationsConcurrently(ctx context.Context, apps []*v1alpha1.Application, helmChecker *helm.Checker, cfg *config.Config, logger *logrus.Entry) []ApplicationCheckResult {
+	const numWorkers = 10 // Number of concurrent workers
+
+	// Create channels for work distribution
+	appChan := make(chan *v1alpha1.Application, len(apps))
+	resultChan := make(chan ApplicationCheckResult, len(apps))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			workerLogger := logger.WithField("worker_id", workerID)
+			for app := range appChan {
+				result := checkApplication(ctx, app, helmChecker, cfg, workerLogger)
+				resultChan <- result
+			}
+		}(i)
+	}
+
+	// Send applications to workers
+	for _, app := range apps {
+		appChan <- app
+	}
+	close(appChan)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	results := make([]ApplicationCheckResult, 0, len(apps))
+	for result := range resultChan {
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// checkApplication checks a single application for Helm chart updates
+func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecker *helm.Checker, cfg *config.Config, logger *logrus.Entry) ApplicationCheckResult {
+	appLogger := logger.WithFields(logrus.Fields{
+		"app_name": app.Name,
+		"project":  app.Spec.Project,
+	})
+
+	appLogger.Info("Processing application")
+
+	// Find Helm source
+	helmSource := findHelmSource(app, cfg.SourceName, appLogger)
+	if helmSource == nil {
+		appLogger.Debug("Application does not use Helm charts, skipping")
+		return ApplicationCheckResult{} // Return empty result, will be filtered out
+	}
+
+	result := ApplicationCheckResult{
+		AppName:        app.Name,
+		Project:        app.Spec.Project,
+		ChartName:      helmSource.Chart,
+		CurrentVersion: helmSource.TargetRevision,
+		RepoURL:        helmSource.RepoURL,
+	}
+
+	appLogger = appLogger.WithFields(logrus.Fields{
+		"chart_name":    helmSource.Chart,
+		"chart_version": helmSource.TargetRevision,
+		"repo_url":      helmSource.RepoURL,
+	})
+
+	appLogger.Info("Found Helm-based application")
+
+	// Check for newer version
+	latestVersion, err := helmChecker.GetLatestVersion(ctx, helmSource.RepoURL, helmSource.Chart)
+	if err != nil {
+		appLogger.WithError(err).Error("Failed to check Helm version")
+		result.Error = err
+		return result
+	}
+
+	result.LatestVersion = latestVersion
+
+	if latestVersion != helmSource.TargetRevision {
+		appLogger.WithFields(logrus.Fields{
+			"current_version": helmSource.TargetRevision,
+			"latest_version":  latestVersion,
+		}).Warn("Update available!")
+		result.HasUpdate = true
+	} else {
+		appLogger.Info("Application is up to date")
+	}
+
+	return result
+}
+
+// findHelmSource finds the Helm source in an ArgoCD application
+func findHelmSource(app *v1alpha1.Application, sourceName string, logger *logrus.Entry) *v1alpha1.ApplicationSource {
+	// Check if it's a single source application with Helm
+	if app.Spec.Source != nil && app.Spec.Source.Chart != "" {
+		return app.Spec.Source
+	}
+
+	// Check multi-source applications
+	if app.Spec.Sources != nil {
+		// If sourceName is specified, look for that specific source first
+		if sourceName != "" {
+			for i := range app.Spec.Sources {
+				source := &app.Spec.Sources[i]
+				// Match by name AND ensure it's a Helm chart
+				if source.Name == sourceName && source.Chart != "" {
+					logger.WithFields(logrus.Fields{
+						"app":         app.Name,
+						"source_name": source.Name,
+						"chart":       source.Chart,
+						"repo":        source.RepoURL,
+					}).Debug("Found matching Helm source by name")
+					return source
+				}
+			}
+		}
+
+		// Fallback: find any Helm source
+		for i := range app.Spec.Sources {
+			source := &app.Spec.Sources[i]
+			if source.Chart != "" {
+				logger.WithFields(logrus.Fields{
+					"app":         app.Name,
+					"source_name": source.Name,
+					"chart":       source.Chart,
+					"repo":        source.RepoURL,
+				}).Debug("Found Helm source (fallback)")
+				return source
+			}
+		}
+	}
+
+	return nil
+}
+
+// scanResults holds statistics about the scan
+type scanResults struct {
+	total     int
+	upToDate  int
+	updates   int
+	skipped   int
+	withError int
+}
+
+// outputResults displays the results to console
+func outputResults(results []ApplicationCheckResult) {
+	// Calculate stats in a single loop
+	stats := scanResults{}
+	var updatesAvailable []ApplicationCheckResult
+	var errors []ApplicationCheckResult
+
+	for _, result := range results {
+		// Skip empty results (non-Helm apps)
+		if result.AppName == "" {
+			continue
+		}
+
+		stats.total++
+
+		if result.Error != nil {
+			stats.skipped++
+			errors = append(errors, result)
+		} else if result.HasUpdate {
+			stats.updates++
+			updatesAvailable = append(updatesAvailable, result)
+		} else {
+			stats.upToDate++
+		}
+	}
+
+	// Display summary
+	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Println("ARGAZER SCAN RESULTS")
+	fmt.Println(strings.Repeat("=", 80))
+	fmt.Printf("\nTotal applications checked: %d\n\n", stats.total)
+	fmt.Printf("Up to date: %d\n", stats.upToDate)
+	fmt.Printf("Updates available: %d\n", stats.updates)
+	fmt.Printf("Skipped: %d\n\n", stats.skipped)
+
+	// Display updates
+	if stats.updates > 0 {
+		fmt.Println(strings.Repeat("-", 80))
+		fmt.Println("APPLICATIONS WITH UPDATES AVAILABLE:")
+		fmt.Println(strings.Repeat("-", 80))
+
+		for _, result := range updatesAvailable {
+			fmt.Printf("\nApplication: %s\n", result.AppName)
+			fmt.Printf("  Project: %s\n", result.Project)
+			fmt.Printf("  Chart: %s\n", result.ChartName)
+			fmt.Printf("  Current Version: %s\n", result.CurrentVersion)
+			fmt.Printf("  Latest Version: %s\n", result.LatestVersion)
+			fmt.Printf("  Repository: %s\n", result.RepoURL)
+		}
+	}
+
+	// Display skipped applications
+	if stats.skipped > 0 {
+		fmt.Println("\n" + strings.Repeat("-", 80))
+		fmt.Println("APPLICATIONS SKIPPED (Unable to check):")
+		fmt.Println(strings.Repeat("-", 80))
+
+		for _, result := range errors {
+			fmt.Printf("\nApplication: %s\n", result.AppName)
+			fmt.Printf("  Project: %s\n", result.Project)
+			fmt.Printf("  Chart: %s\n", result.ChartName)
+			fmt.Printf("  Repository: %s\n", result.RepoURL)
+			fmt.Printf("  Reason: %s\n", result.Error.Error())
+		}
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 80) + "\n")
+}
+
+// sendNotifications sends notifications via the configured notifier
+func sendNotifications(ctx context.Context, notifier notification.Notifier, results []ApplicationCheckResult, logger *logrus.Entry) error {
+	// Check if there are updates in a single loop
+	var updatesAvailable []ApplicationCheckResult
+	for _, result := range results {
+		if result.HasUpdate {
+			updatesAvailable = append(updatesAvailable, result)
+		}
+	}
+
+	if len(updatesAvailable) == 0 {
+		logger.Info("No updates available, skipping notification")
+		return nil
+	}
+
+	// Build notification message
+	subject := fmt.Sprintf("Argazer Notification: %d Helm Chart Update(s) Available", len(updatesAvailable))
+	message := buildNotificationMessage(updatesAvailable)
+
+	// Send notification
+	if err := notifier.Send(ctx, subject, message); err != nil {
+		return fmt.Errorf("failed to send notification: %w", err)
+	}
+
+	logger.Info("Successfully sent notification")
+	return nil
+}
+
+// buildNotificationMessage builds the notification message body
+func buildNotificationMessage(updates []ApplicationCheckResult) string {
+	var message strings.Builder
+	message.WriteString(fmt.Sprintf("Found %d application(s) with Helm chart updates:\n\n", len(updates)))
+
+	for _, result := range updates {
+		message.WriteString("━━━━━━━━━━━━━━━━━━━━\n")
+		message.WriteString(fmt.Sprintf("*Application:* `%s`\n", result.AppName))
+		message.WriteString(fmt.Sprintf("*Project:* `%s`\n", result.Project))
+		message.WriteString(fmt.Sprintf("*Chart:* `%s`\n", result.ChartName))
+		message.WriteString(fmt.Sprintf("*Current:* `%s`\n", result.CurrentVersion))
+		message.WriteString(fmt.Sprintf("*Latest:* `%s`\n", result.LatestVersion))
+		message.WriteString(fmt.Sprintf("*Repo:* `%s`\n", result.RepoURL))
+		message.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
+	}
+
+	return message.String()
+}
+
+// setupLogging configures the logging system
+func setupLogging(verbose bool) *logrus.Entry {
+	if verbose {
+		logrus.SetLevel(logrus.DebugLevel)
+	} else {
+		logrus.SetLevel(logrus.InfoLevel)
+	}
+
+	// Use JSON logging format
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+
+	// Return a base logger entry
+	return logrus.WithField("service", "argazer")
+}
