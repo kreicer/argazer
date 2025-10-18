@@ -52,7 +52,9 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
-	viper.BindPFlags(rootCmd.Flags())
+	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {
+		logrus.WithError(err).Fatal("Failed to bind flags")
+	}
 
 	if err := rootCmd.Execute(); err != nil {
 		logrus.Fatal(err)
@@ -118,7 +120,7 @@ type clients struct {
 }
 
 // initializeClients creates all required clients (ArgoCD, Helm, Notifier)
-func initializeClients(ctx context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
+func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
 	c := &clients{}
 
 	// Create ArgoCD API client
@@ -339,11 +341,10 @@ func findHelmSource(app *v1alpha1.Application, sourceName string, logger *logrus
 
 // scanResults holds statistics about the scan
 type scanResults struct {
-	total     int
-	upToDate  int
-	updates   int
-	skipped   int
-	withError int
+	total    int
+	upToDate int
+	updates  int
+	skipped  int
 }
 
 // outputResults displays the results to console

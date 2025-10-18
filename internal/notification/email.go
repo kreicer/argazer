@@ -81,7 +81,11 @@ func (e *EmailNotifier) sendWithTLS(addr string, auth smtp.Auth, body []byte) er
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			e.logger.WithError(err).Warn("Failed to close SMTP client")
+		}
+	}()
 
 	// Start TLS
 	tlsConfig := &tls.Config{
@@ -116,7 +120,11 @@ func (e *EmailNotifier) sendWithTLS(addr string, auth smtp.Auth, body []byte) er
 	if err != nil {
 		return fmt.Errorf("failed to get data writer: %w", err)
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			e.logger.WithError(err).Warn("Failed to close data writer")
+		}
+	}()
 
 	if _, err := w.Write(body); err != nil {
 		return fmt.Errorf("failed to write email body: %w", err)

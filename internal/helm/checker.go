@@ -71,7 +71,11 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch index: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.logger.WithError(err).Warn("Failed to close response body")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("repository does not provide index.yaml (status %d) - likely an OCI/container registry", resp.StatusCode)

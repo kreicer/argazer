@@ -60,7 +60,11 @@ func NewClient(serverURL, username, password string, insecure bool, logger *logr
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session client: %w", err)
 	}
-	defer closer.Close()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			logger.WithError(err).Warn("Failed to close session client")
+		}
+	}()
 
 	sessionResp, err := sessionClient.Create(context.Background(), &session.SessionCreateRequest{
 		Username: username,

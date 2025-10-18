@@ -84,7 +84,9 @@ func Load() (*Config, error) {
 	}
 
 	for _, env := range envVars {
-		viper.BindEnv(env)
+		if err := viper.BindEnv(env); err != nil {
+			return nil, fmt.Errorf("failed to bind env var %s: %w", env, err)
+		}
 	}
 
 	// Handle labels from environment variable BEFORE unmarshal

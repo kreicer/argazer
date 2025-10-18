@@ -1,4 +1,5 @@
 ![Claude Assisted](https://img.shields.io/badge/Made%20with-Claude-8A2BE2?logo=anthropic)
+![CI](https://github.com/kreicer/argazer/actions/workflows/ci.yml/badge.svg)
 
 # Argazer
 

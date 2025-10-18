@@ -73,7 +73,11 @@ func (n *TelegramNotifier) sendMessage(ctx context.Context, message string) erro
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			n.logger.WithError(err).Warn("Failed to close response body")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to send message: status %d", resp.StatusCode)
