@@ -409,7 +409,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run Argazer
-        uses: docker://ghcr.io/<owner>/<repo>:latest
+        uses: docker://ghcr.io/<owner>/<repo>:<version>
         env:
           AG_ARGOCD_URL: ${{ secrets.ARGOCD_URL }}
           AG_ARGOCD_USERNAME: ${{ secrets.ARGOCD_USERNAME }}
