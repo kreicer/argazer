@@ -62,8 +62,15 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 		"full_repo_path": fullRepoPath,
 	}).Debug("Parsed OCI URL")
 
+	// Determine the scheme - default to https unless explicitly http for localhost/testing
+	scheme := "https"
+	if strings.HasPrefix(registry, "localhost") || strings.HasPrefix(registry, "127.0.0.1") {
+		// Allow http for localhost/testing
+		scheme = "http"
+	}
+
 	// Build Docker Registry API v2 endpoint
-	tagsURL := fmt.Sprintf("https://%s/v2/%s/tags/list", registry, fullRepoPath)
+	tagsURL := fmt.Sprintf("%s://%s/v2/%s/tags/list", scheme, registry, fullRepoPath)
 
 	o.logger.WithField("url", tagsURL).Debug("Fetching tags from OCI registry")
 
@@ -104,9 +111,13 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	// Check response status
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		if creds != nil {
-			return "", fmt.Errorf("OCI registry authentication failed (status %d). Check credentials for %s", resp.StatusCode, registry)
+			return "", fmt.Errorf("%w for %s (status %d): check credentials", ErrAuthenticationFailed, registry, resp.StatusCode)
 		}
-		return "", fmt.Errorf("OCI registry requires authentication (status %d). No credentials found for %s. Set AG_AUTH_* environment variables or add to repository_auth in config file", resp.StatusCode, registry)
+		return "", fmt.Errorf("%w for %s (status %d): set AG_AUTH_* environment variables or add to repository_auth in config file", ErrAuthenticationFailed, registry, resp.StatusCode)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: %s/%s", ErrChartNotFound, registry, chartName)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -134,8 +145,29 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 		"tags":       tagsResp.Tags,
 	}).Debug("Retrieved tags from OCI registry")
 
-	// Filter and find latest semver version
-	latestVersion, err := o.findLatestSemver(tagsResp.Tags)
+	// Filter out common non-version tags before finding latest
+	var candidateTags []string
+	excludedTags := map[string]bool{
+		"latest": true,
+		"dev":    true,
+		"main":   true,
+		"master": true,
+		"stable": true,
+	}
+
+	for _, tag := range tagsResp.Tags {
+		if !excludedTags[tag] {
+			candidateTags = append(candidateTags, tag)
+		}
+	}
+
+	if len(candidateTags) == 0 {
+		return "", fmt.Errorf("%w: all tags were filtered out", ErrNoValidVersions)
+	}
+
+	// Use shared utility function to find the latest semantic version
+	// This will parse each tag with semver and filter out invalid ones
+	latestVersion, err := findLatestSemver(candidateTags, o.logger)
 	if err != nil {
 		return "", fmt.Errorf("failed to determine latest version: %w", err)
 	}
@@ -166,50 +198,4 @@ func parseOCIURL(repoURL string) (registry string, repoPath string) {
 	}
 
 	return registry, repoPath
-}
-
-// findLatestSemver finds the latest semantic version from a list of tags
-// It filters out non-semver tags (like "latest", "dev", etc.) and returns the highest version
-func (o *OCIChecker) findLatestSemver(tags []string) (string, error) {
-	// Filter out non-semver tags and common non-version tags
-	var versions []string
-	excludedTags := map[string]bool{
-		"latest": true,
-		"dev":    true,
-		"main":   true,
-		"master": true,
-		"stable": true,
-	}
-
-	for _, tag := range tags {
-		// Skip excluded tags
-		if excludedTags[tag] {
-			continue
-		}
-
-		// Try to identify semver-like tags
-		// Accept tags that start with a digit or 'v' followed by a digit
-		if len(tag) > 0 && (isDigit(tag[0]) || (tag[0] == 'v' && len(tag) > 1 && isDigit(tag[1]))) {
-			versions = append(versions, tag)
-		}
-	}
-
-	if len(versions) == 0 {
-		return "", fmt.Errorf("no semantic version tags found")
-	}
-
-	// Use the existing Checker's version comparison logic
-	// Create a temporary checker to reuse the comparison logic
-	checker := &Checker{logger: o.logger}
-	latestVersion, err := checker.getLatestVersion(versions)
-	if err != nil {
-		return "", err
-	}
-
-	return latestVersion, nil
-}
-
-// isDigit checks if a byte is a digit
-func isDigit(b byte) bool {
-	return b >= '0' && b <= '9'
 }

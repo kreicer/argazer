@@ -43,11 +43,10 @@ func (n *TelegramNotifier) Send(ctx context.Context, subject, message string) er
 
 // sendMessage sends a message to the configured Telegram chat
 func (n *TelegramNotifier) sendMessage(ctx context.Context, message string) error {
-	// Prepare the payload
+	// Prepare the payload - no parse_mode since we don't use any formatting
 	payload := map[string]string{
-		"chat_id":    n.chatID,
-		"text":       message,
-		"parse_mode": "Markdown",
+		"chat_id": n.chatID,
+		"text":    message,
 	}
 
 	jsonData, err := json.Marshal(payload)

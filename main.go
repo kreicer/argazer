@@ -50,6 +50,7 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().StringSlice("projects", []string{"*"}, "Projects to check (comma-separated, or '*' for all)")
 	rootCmd.Flags().StringSlice("app-names", []string{"*"}, "Application names to check (comma-separated, or '*' for all)")
 	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', or empty for console only")
+	rootCmd.Flags().Int("concurrency", 10, "Number of concurrent workers for checking applications")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
@@ -218,7 +219,12 @@ type ApplicationCheckResult struct {
 
 // checkApplicationsConcurrently checks multiple applications in parallel using a worker pool
 func checkApplicationsConcurrently(ctx context.Context, apps []*v1alpha1.Application, helmChecker *helm.Checker, cfg *config.Config, logger *logrus.Entry) []ApplicationCheckResult {
-	const numWorkers = 10 // Number of concurrent workers
+	numWorkers := cfg.Concurrency
+	if numWorkers <= 0 {
+		numWorkers = 10 // Fallback to default
+	}
+
+	logger.WithField("concurrency", numWorkers).Debug("Starting concurrent application checks")
 
 	// Create channels for work distribution
 	appChan := make(chan *v1alpha1.Application, len(apps))

@@ -25,60 +25,40 @@ func TestNewChecker(t *testing.T) {
 	}
 }
 
-func TestCompareVersions(t *testing.T) {
+func TestFindLatestSemver(t *testing.T) {
 	logger := logrus.NewEntry(logrus.New())
-	authProvider, _ := auth.NewProvider(nil, logger)
-	checker, _ := NewChecker(authProvider, logger)
 
 	tests := []struct {
-		v1     string
-		v2     string
-		expect int
-	}{
-		{"1.0.0", "1.0.0", 0},
-		{"1.0.1", "1.0.0", 1},
-		{"1.0.0", "1.0.1", -1},
-		{"2.0.0", "1.9.9", 1},
-		{"1.9.9", "2.0.0", -1},
-	}
-
-	for _, test := range tests {
-		result := checker.compareVersions(test.v1, test.v2)
-		if result != test.expect {
-			t.Errorf("compareVersions(%s, %s) = %d, expected %d", test.v1, test.v2, result, test.expect)
-		}
-	}
-}
-
-func TestGetLatestVersion(t *testing.T) {
-	logger := logrus.NewEntry(logrus.New())
-	authProvider, _ := auth.NewProvider(nil, logger)
-	checker, _ := NewChecker(authProvider, logger)
-
-	tests := []struct {
+		name     string
 		versions []string
 		expect   string
 		hasError bool
 	}{
-		{[]string{"1.0.0", "1.0.1", "1.0.2"}, "1.0.2", false},
-		{[]string{"2.0.0", "1.0.0", "1.5.0"}, "2.0.0", false},
-		{[]string{"1.0.0"}, "1.0.0", false},
-		{[]string{}, "", true},
+		{"simple versions", []string{"1.0.0", "1.0.1", "1.0.2"}, "1.0.2", false},
+		{"mixed order", []string{"2.0.0", "1.0.0", "1.5.0"}, "2.0.0", false},
+		{"single version", []string{"1.0.0"}, "1.0.0", false},
+		{"empty list", []string{}, "", true},
+		{"with v prefix", []string{"v1.0.0", "v1.0.1", "v2.0.0"}, "v2.0.0", false},
+		{"mixed valid and invalid", []string{"1.0.0", "invalid", "2.0.0", "latest"}, "2.0.0", false},
+		{"all invalid", []string{"invalid", "latest", "dev"}, "", true},
+		{"pre-release versions", []string{"1.0.0", "1.0.0-alpha", "1.0.0-beta", "2.0.0"}, "2.0.0", false},
 	}
 
 	for _, test := range tests {
-		result, err := checker.getLatestVersion(test.versions)
-		if test.hasError {
-			if err == nil {
-				t.Errorf("Expected error for versions %v, got none", test.versions)
+		t.Run(test.name, func(t *testing.T) {
+			result, err := findLatestSemver(test.versions, logger)
+			if test.hasError {
+				if err == nil {
+					t.Errorf("Expected error for versions %v, got none", test.versions)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for versions %v: %v", test.versions, err)
+				}
+				if result != test.expect {
+					t.Errorf("findLatestSemver(%v) = %s, expected %s", test.versions, result, test.expect)
+				}
 			}
-		} else {
-			if err != nil {
-				t.Errorf("Unexpected error for versions %v: %v", test.versions, err)
-			}
-			if result != test.expect {
-				t.Errorf("getLatestVersion(%v) = %s, expected %s", test.versions, result, test.expect)
-			}
-		}
+		})
 	}
 }

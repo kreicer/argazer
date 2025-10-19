@@ -37,8 +37,9 @@ type Config struct {
 	EmailUseTLS       bool     `mapstructure:"email_use_tls"`
 
 	// General settings
-	Verbose    bool   `mapstructure:"verbose"`
-	SourceName string `mapstructure:"source_name"` // Name of the source to check in multi-source applications
+	Verbose     bool   `mapstructure:"verbose"`
+	SourceName  string `mapstructure:"source_name"` // Name of the source to check in multi-source applications
+	Concurrency int    `mapstructure:"concurrency"` // Number of concurrent workers for checking applications
 
 	// Repository authentication
 	RepositoryAuth []RepositoryAuth `mapstructure:"repository_auth"`
@@ -56,6 +57,7 @@ func Load() (*Config, error) {
 	// Set default values
 	viper.SetDefault("verbose", false)
 	viper.SetDefault("source_name", "chart-repo")
+	viper.SetDefault("concurrency", 10) // Default to 10 concurrent workers
 	viper.SetDefault("projects", []string{"*"})
 	viper.SetDefault("app_names", []string{"*"})
 	viper.SetDefault("argocd_insecure", false)
@@ -78,26 +80,11 @@ func Load() (*Config, error) {
 	}
 
 	// Set up environment variable prefix and replacer
+	// AutomaticEnv() automatically binds all config fields to environment variables
+	// with the AG_ prefix (e.g., AG_ARGOCD_URL maps to argocd_url)
 	viper.SetEnvPrefix("AG")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
-
-	// Bind all environment variables with AG_ prefix
-	envVars := []string{
-		"argocd_url", "argocd_username", "argocd_password", "argocd_insecure",
-		"projects", "app_names", "labels",
-		"notification_channel",
-		"telegram_webhook", "telegram_chat_id",
-		"email_smtp_host", "email_smtp_port", "email_smtp_username", "email_smtp_password",
-		"email_from", "email_to", "email_use_tls",
-		"verbose", "source_name",
-	}
-
-	for _, env := range envVars {
-		if err := viper.BindEnv(env); err != nil {
-			return nil, fmt.Errorf("failed to bind env var %s: %w", env, err)
-		}
-	}
 
 	// Handle labels from environment variable BEFORE unmarshal
 	// Format: AG_LABELS=key1=value1,key2=value2

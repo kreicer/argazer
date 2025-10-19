@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"argazer/internal/auth"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
@@ -106,11 +104,11 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 	// Find the chart
 	chart, exists := index.Entries[chartName]
 	if !exists {
-		return "", fmt.Errorf("chart %s not found in repository", chartName)
+		return "", fmt.Errorf("%w: %s", ErrChartNotFound, chartName)
 	}
 
 	if len(chart) == 0 {
-		return "", fmt.Errorf("no versions found for chart %s", chartName)
+		return "", fmt.Errorf("%w: %s (no versions available)", ErrChartNotFound, chartName)
 	}
 
 	// Sort versions and get the latest
@@ -119,7 +117,8 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 		versions[i] = entry.Version
 	}
 
-	latestVersion, err := c.getLatestVersion(versions)
+	// Use shared utility function for finding latest semantic version
+	latestVersion, err := findLatestSemver(versions, c.logger)
 	if err != nil {
 		return "", fmt.Errorf("failed to determine latest version: %w", err)
 	}
@@ -148,49 +147,6 @@ func (c *Checker) parseIndex(body io.Reader) (*Index, error) {
 	}
 
 	return &index, nil
-}
-
-// getLatestVersion determines the latest version from a list of versions
-func (c *Checker) getLatestVersion(versions []string) (string, error) {
-	if len(versions) == 0 {
-		return "", fmt.Errorf("no versions provided")
-	}
-
-	// Sort versions in descending order
-	sort.Slice(versions, func(i, j int) bool {
-		return c.compareVersions(versions[i], versions[j]) > 0
-	})
-
-	return versions[0], nil
-}
-
-// compareVersions compares two semantic versions using proper semver logic
-// Returns: 1 if v1 > v2, 0 if v1 == v2, -1 if v1 < v2
-func (c *Checker) compareVersions(v1, v2 string) int {
-	// Parse versions using semver library
-	version1, err1 := semver.NewVersion(v1)
-	version2, err2 := semver.NewVersion(v2)
-
-	// If either version fails to parse, fall back to string comparison
-	if err1 != nil || err2 != nil {
-		c.logger.WithFields(logrus.Fields{
-			"v1":       v1,
-			"v2":       v2,
-			"v1_error": err1,
-			"v2_error": err2,
-		}).Debug("Failed to parse versions as semver, falling back to string comparison")
-
-		if v1 == v2 {
-			return 0
-		}
-		if v1 > v2 {
-			return 1
-		}
-		return -1
-	}
-
-	// Use proper semantic version comparison
-	return version1.Compare(version2)
 }
 
 // Index represents a Helm repository index

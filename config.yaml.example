@@ -54,6 +54,7 @@ email_use_tls: true
 # General Settings
 verbose: false
 source_name: "chart-repo"  # For multi-source applications
+concurrency: 10  # Number of concurrent workers for checking applications
 
 # Repository Authentication (optional)
 # WARNING: DO NOT store credentials here in production!

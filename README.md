@@ -85,6 +85,7 @@ email_use_tls: true
 # General
 verbose: false
 source_name: "chart-repo"  # For multi-source apps, specify which source to check
+concurrency: 10  # Number of concurrent workers (default: 10)
 ```
 
 ### Environment Variables
@@ -122,6 +123,7 @@ export AG_EMAIL_USE_TLS="true"
 # General
 export AG_VERBOSE="false"
 export AG_SOURCE_NAME="chart-repo"
+export AG_CONCURRENCY="10"  # Number of concurrent workers
 ```
 
 ## ArgoCD RBAC Setup
