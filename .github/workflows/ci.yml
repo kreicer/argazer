@@ -37,7 +37,7 @@ jobs:
         run: go tool cover -func=coverage.out
 
       - name: Upload coverage to Codecov (optional)
-        if: github.event_name != 'pull_request' && secrets.CODECOV_TOKEN != ''
+        if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4
         continue-on-error: true
         with:
