@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,7 @@ func TestOCICheckerGetLatestVersion_Unauthorized(t *testing.T) {
 		t.Fatal("Expected error for unauthorized, got nil")
 	}
 
-	if !isErrorType(err, ErrAuthenticationFailed) {
+	if !errors.Is(err, ErrAuthenticationFailed) {
 		t.Errorf("Expected ErrAuthenticationFailed, got: %v", err)
 	}
 }
@@ -87,7 +88,7 @@ func TestOCICheckerGetLatestVersion_NotFound(t *testing.T) {
 		t.Fatal("Expected error for not found, got nil")
 	}
 
-	if !isErrorType(err, ErrChartNotFound) {
+	if !errors.Is(err, ErrChartNotFound) {
 		t.Errorf("Expected ErrChartNotFound, got: %v", err)
 	}
 }
@@ -136,7 +137,7 @@ func TestOCICheckerGetLatestVersion_NoValidVersions(t *testing.T) {
 		t.Fatal("Expected error for no valid versions, got nil")
 	}
 
-	if !isErrorType(err, ErrNoValidVersions) {
+	if !errors.Is(err, ErrNoValidVersions) {
 		t.Errorf("Expected ErrNoValidVersions, got: %v", err)
 	}
 }

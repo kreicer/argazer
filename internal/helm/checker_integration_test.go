@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -83,7 +84,7 @@ entries:
 	}
 
 	// Check if it's the right error type
-	if !isErrorType(err, ErrChartNotFound) {
+	if !errors.Is(err, ErrChartNotFound) {
 		t.Errorf("Expected ErrChartNotFound, got: %v", err)
 	}
 }
@@ -168,7 +169,7 @@ entries:
 		t.Fatal("Expected error for empty version list, got nil")
 	}
 
-	if !isErrorType(err, ErrChartNotFound) {
+	if !errors.Is(err, ErrChartNotFound) {
 		t.Errorf("Expected ErrChartNotFound, got: %v", err)
 	}
 }
@@ -252,14 +253,4 @@ entries:
 	if version != expected {
 		t.Errorf("Expected version %s, got %s", expected, version)
 	}
-}
-
-// isErrorType checks if an error wraps a specific error type
-func isErrorType(err, target error) bool {
-	if err == nil {
-		return false
-	}
-	// Simple string contains check for wrapped errors
-	return fmt.Sprintf("%v", err) != fmt.Sprintf("%v", target) &&
-		(err == target || fmt.Sprintf("%v", err)[:len(fmt.Sprintf("%v", target))] == fmt.Sprintf("%v", target))
 }
