@@ -508,58 +508,56 @@ All operational logs are output in structured JSON format:
 
 ### Telegram
 
-Argazer sends formatted Markdown messages to Telegram with visual separators:
+Argazer sends compact plain text messages to Telegram:
 
 ```
-*Argazer Alert*
+Argazer Notification: 2 Helm Chart Update(s) Available
 
-Found 2 application(s) with Helm chart updates:
+frontend (production)
+  Chart: nginx
+  Version: 1.20.0 -> 1.21.0
+  Repo: https://charts.bitnami.com/bitnami
 
-----------------------------------------
-*Application:* `frontend`
-*Project:* `production`
-*Chart:* `nginx`
-*Current:* `1.20.0`
-*Latest:* `1.21.0`
-*Repo:* `https://charts.bitnami.com/bitnami`
-----------------------------------------
+backend (production)
+  Chart: postgresql
+  Version: 11.9.13 -> 11.10.0
+  Repo: https://charts.bitnami.com/bitnami
+```
 
-----------------------------------------
-*Application:* `backend`
-*Project:* `production`
-*Chart:* `postgresql`
-*Current:* `11.9.13`
-*Latest:* `11.10.0`
-*Repo:* `https://charts.bitnami.com/bitnami`
-----------------------------------------
+For large numbers of updates, messages are automatically split to stay within Telegram's 4096 character limit:
+
+```
+Argazer Notification [1/3]: 27 Update(s)
+
+app1 (production)
+  Chart: redis
+  Version: 7.0.0 -> 7.2.0
+  Repo: https://charts.bitnami.com/bitnami
+
+app2 (staging)
+  Chart: postgresql
+  Version: 15.0.0 -> 15.3.0
+  Repo: https://charts.bitnami.com/bitnami
+
+...
 ```
 
 ### Email
 
-Plain text email with clear formatting and visual separators:
+Plain text email with clean, compact formatting:
 
 ```
-Subject: Argazer Alert: 2 Helm Chart Update(s) Available
+Subject: Argazer Notification: 2 Helm Chart Update(s) Available
 
-Argazer found 2 application(s) with Helm chart updates:
+frontend (production)
+  Chart: nginx
+  Version: 1.20.0 -> 1.21.0
+  Repo: https://charts.bitnami.com/bitnami
 
-------------------------------------------------------------
-Application: frontend
-Project: production
-Chart: nginx
-Current Version: 1.20.0
-Latest Version: 1.21.0
-Repository: https://charts.bitnami.com/bitnami
-------------------------------------------------------------
-
-------------------------------------------------------------
-Application: backend
-Project: production
-Chart: postgresql
-Current Version: 11.9.13
-Latest Version: 11.10.0
-Repository: https://charts.bitnami.com/bitnami
-------------------------------------------------------------
+backend (production)
+  Chart: postgresql
+  Version: 11.9.13 -> 11.10.0
+  Repo: https://charts.bitnami.com/bitnami
 ```
 
 ## Development

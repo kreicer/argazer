@@ -450,36 +450,92 @@ func sendNotifications(ctx context.Context, notifier notification.Notifier, resu
 		return nil
 	}
 
-	// Build notification message
-	subject := fmt.Sprintf("Argazer Notification: %d Helm Chart Update(s) Available", len(updatesAvailable))
-	message := buildNotificationMessage(updatesAvailable)
+	// Build notification messages (may be split if too long)
+	messages := buildNotificationMessages(updatesAvailable)
 
-	// Send notification
-	if err := notifier.Send(ctx, subject, message); err != nil {
-		return fmt.Errorf("failed to send notification: %w", err)
+	logger.WithField("message_count", len(messages)).Info("Sending notifications")
+
+	// Send all messages
+	for i, msg := range messages {
+		subject := fmt.Sprintf("Argazer Notification: %d Helm Chart Update(s) Available", len(updatesAvailable))
+		if len(messages) > 1 {
+			subject = fmt.Sprintf("Argazer Notification [%d/%d]: %d Update(s)", i+1, len(messages), len(updatesAvailable))
+		}
+
+		if err := notifier.Send(ctx, subject, msg); err != nil {
+			return fmt.Errorf("failed to send notification %d/%d: %w", i+1, len(messages), err)
+		}
 	}
 
-	logger.Info("Successfully sent notification")
+	logger.Info("Successfully sent all notifications")
 	return nil
 }
 
-// buildNotificationMessage builds the notification message body
-func buildNotificationMessage(updates []ApplicationCheckResult) string {
-	var message strings.Builder
-	message.WriteString(fmt.Sprintf("Found %d application(s) with Helm chart updates:\n\n", len(updates)))
+// buildNotificationMessages builds notification message(s), splitting if needed for length limits
+// Telegram has a 4096 character limit per message
+func buildNotificationMessages(updates []ApplicationCheckResult) []string {
+	const maxMessageLength = 3900 // Leave some room for headers and safety margin
 
+	// Build individual app update strings
+	var appMessages []string
 	for _, result := range updates {
-		message.WriteString("━━━━━━━━━━━━━━━━━━━━\n")
-		message.WriteString(fmt.Sprintf("*Application:* `%s`\n", result.AppName))
-		message.WriteString(fmt.Sprintf("*Project:* `%s`\n", result.Project))
-		message.WriteString(fmt.Sprintf("*Chart:* `%s`\n", result.ChartName))
-		message.WriteString(fmt.Sprintf("*Current:* `%s`\n", result.CurrentVersion))
-		message.WriteString(fmt.Sprintf("*Latest:* `%s`\n", result.LatestVersion))
-		message.WriteString(fmt.Sprintf("*Repo:* `%s`\n", result.RepoURL))
-		message.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
+		var app strings.Builder
+		// Compact format: app name as header with project
+		app.WriteString(fmt.Sprintf("%s (%s)\n", result.AppName, result.Project))
+		app.WriteString(fmt.Sprintf("  Chart: %s\n", result.ChartName))
+		app.WriteString(fmt.Sprintf("  Version: %s -> %s\n", result.CurrentVersion, result.LatestVersion))
+		app.WriteString(fmt.Sprintf("  Repo: %s\n", result.RepoURL))
+		app.WriteString("\n")
+		appMessages = append(appMessages, app.String())
 	}
 
-	return message.String()
+	// Build header (empty for first message, apps only)
+	header := ""
+
+	// Check if we can fit everything in one message
+	totalLength := len(header)
+	for _, msg := range appMessages {
+		totalLength += len(msg)
+	}
+
+	if totalLength <= maxMessageLength {
+		// Everything fits in one message
+		var message strings.Builder
+		message.WriteString(header)
+		for _, msg := range appMessages {
+			message.WriteString(msg)
+		}
+		return []string{message.String()}
+	}
+
+	// Need to split into multiple messages
+	var messages []string
+	var currentMessage strings.Builder
+	currentLength := 0
+
+	// First message gets the header
+	currentMessage.WriteString(header)
+	currentLength = len(header)
+
+	for _, appMsg := range appMessages {
+		// Check if adding this app would exceed the limit
+		if currentLength+len(appMsg) > maxMessageLength {
+			// Save current message and start a new one
+			messages = append(messages, currentMessage.String())
+			currentMessage.Reset()
+			currentLength = 0
+		}
+
+		currentMessage.WriteString(appMsg)
+		currentLength += len(appMsg)
+	}
+
+	// Add the last message if it has content
+	if currentLength > 0 {
+		messages = append(messages, currentMessage.String())
+	}
+
+	return messages
 }
 
 // setupLogging configures the logging system

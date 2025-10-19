@@ -36,7 +36,7 @@ func (n *TelegramNotifier) Send(ctx context.Context, subject, message string) er
 	// Combine subject and message for Telegram
 	fullMessage := message
 	if subject != "" {
-		fullMessage = fmt.Sprintf("*%s*\n\n%s", subject, message)
+		fullMessage = fmt.Sprintf("%s\n\n%s", subject, message)
 	}
 	return n.sendMessage(ctx, fullMessage)
 }

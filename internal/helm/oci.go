@@ -106,7 +106,7 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 		if creds != nil {
 			return "", fmt.Errorf("OCI registry authentication failed (status %d). Check credentials for %s", resp.StatusCode, registry)
 		}
-		return "", fmt.Errorf("OCI registry requires authentication (status %d). No credentials found for %s. Use 'docker login %s' or 'helm registry login %s' or set AG_AUTH_* environment variables", resp.StatusCode, registry, registry, registry)
+		return "", fmt.Errorf("OCI registry requires authentication (status %d). No credentials found for %s. Set AG_AUTH_* environment variables or add to repository_auth in config file", resp.StatusCode, registry)
 	}
 
 	if resp.StatusCode != http.StatusOK {
