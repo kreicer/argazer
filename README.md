@@ -569,11 +569,37 @@ backend (production)
 
 - Go 1.21 or higher
 - Access to an ArgoCD instance
+- golangci-lint (for development)
 
 ### Building
 
 ```bash
+# Build the binary
+make build
+
+# Or using go directly
 go build -o argazer .
+```
+
+### Development Workflow
+
+```bash
+# Install git hooks (runs linter and tests before push)
+make install-hooks
+
+# Run tests
+make test
+
+# Run linter
+make lint
+
+# Clean build artifacts
+make clean
+```
+
+The pre-push hook will automatically run linter and tests before each push. To bypass (not recommended):
+```bash
+git push --no-verify
 ```
 
 

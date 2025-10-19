@@ -36,14 +36,10 @@ func NewProvider(configAuth []ConfigAuth, logger *logrus.Entry) (*Provider, erro
 	}
 
 	// Load credentials from config file
-	if err := p.loadConfigAuth(configAuth); err != nil {
-		logger.WithError(err).Warn("Failed to load config file authentication")
-	}
+	p.loadConfigAuth(configAuth)
 
 	// Load credentials from environment variables (overrides config)
-	if err := p.loadEnvAuth(); err != nil {
-		logger.WithError(err).Warn("Failed to load environment variables authentication")
-	}
+	p.loadEnvAuth()
 
 	// Log summary
 	logger.WithField("auths", len(p.credentials)).Debug("Loaded authentication credentials")
@@ -93,7 +89,7 @@ func (p *Provider) normalizeURL(repoURL string) string {
 }
 
 // loadConfigAuth loads authentication from config file
-func (p *Provider) loadConfigAuth(configAuths []ConfigAuth) error {
+func (p *Provider) loadConfigAuth(configAuths []ConfigAuth) {
 	for _, auth := range configAuths {
 		if auth.URL == "" || auth.Username == "" || auth.Password == "" {
 			p.logger.WithField("url", auth.URL).Warn("Incomplete auth configuration, skipping")
@@ -114,13 +110,11 @@ func (p *Provider) loadConfigAuth(configAuths []ConfigAuth) error {
 			"username":   auth.Username,
 		}).Debug("Loaded credentials from config file")
 	}
-
-	return nil
 }
 
 // loadEnvAuth loads authentication from environment variables
 // Format: AG_AUTH_URL_<id>=registry, AG_AUTH_USER_<id>=user, AG_AUTH_PASS_<id>=pass
-func (p *Provider) loadEnvAuth() error {
+func (p *Provider) loadEnvAuth() {
 	// Find all AG_AUTH_URL_* variables
 	authGroups := make(map[string]map[string]string)
 
@@ -186,6 +180,4 @@ func (p *Provider) loadEnvAuth() error {
 			"normalized": normalized,
 		}).Debug("Loaded credentials from environment variables")
 	}
-
-	return nil
 }

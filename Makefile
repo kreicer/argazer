@@ -18,7 +18,7 @@ GOMOD := $(GOCMD) mod
 # Build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build clean deps run docker-build docker-push help
+.PHONY: all build clean install-hooks test lint deps run docker-build docker-push fmt security help
 
 # Default target
 all: clean deps build
@@ -33,6 +33,22 @@ clean:
 	@echo "Cleaning..."
 	$(GOCLEAN)
 	rm -f $(APP_NAME)
+
+# Install git hooks
+install-hooks:
+	@echo "Installing git hooks..."
+	@bash scripts/install-hooks.sh
+
+# Run tests with coverage
+test:
+	@echo "Running tests..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out | tail -1
+
+# Run linter
+lint:
+	@echo "Running linter..."
+	@golangci-lint run --timeout=10m
 
 # Download dependencies
 deps:
@@ -62,15 +78,6 @@ fmt:
 	@echo "Formatting code..."
 	$(GOCMD) fmt ./...
 
-# Lint code
-lint:
-	@echo "Linting code..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found. Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
-	fi
-
 # Security scan
 security:
 	@echo "Running security scan..."
@@ -85,12 +92,14 @@ help:
 	@echo "Available targets:"
 	@echo "  build        - Build the application"
 	@echo "  clean        - Clean build artifacts"
+	@echo "  install-hooks- Install git pre-push hooks"
+	@echo "  test         - Run tests with coverage"
+	@echo "  lint         - Lint code (timeout: 10m)"
 	@echo "  deps         - Download dependencies"
 	@echo "  run          - Run the application locally"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-push  - Push Docker image"
 	@echo "  fmt          - Format code"
-	@echo "  lint         - Lint code"
 	@echo "  security     - Run security scan"
 	@echo "  help         - Show this help message"
 
