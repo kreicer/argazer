@@ -9,22 +9,26 @@ import (
 	"strings"
 	"time"
 
+	"argazer/internal/auth"
+
 	"github.com/sirupsen/logrus"
 )
 
 // OCIChecker checks OCI-based Helm repositories for new chart versions
 type OCIChecker struct {
-	httpClient *http.Client
-	logger     *logrus.Entry
+	httpClient   *http.Client
+	authProvider *auth.Provider
+	logger       *logrus.Entry
 }
 
 // NewOCIChecker creates a new OCI checker
-func NewOCIChecker(logger *logrus.Entry) *OCIChecker {
+func NewOCIChecker(authProvider *auth.Provider, logger *logrus.Entry) *OCIChecker {
 	return &OCIChecker{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		logger: logger,
+		authProvider: authProvider,
+		logger:       logger,
 	}
 }
 
@@ -73,6 +77,19 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	req.Header.Set("User-Agent", "argazer/1.0")
 	req.Header.Set("Accept", "application/json")
 
+	// Add authentication if available
+	creds := o.authProvider.GetCredentials(registry)
+	if creds != nil {
+		req.SetBasicAuth(creds.Username, creds.Password)
+		o.logger.WithFields(logrus.Fields{
+			"source":   creds.Source,
+			"username": creds.Username,
+			"registry": registry,
+		}).Debug("Using authentication for OCI registry")
+	} else {
+		o.logger.WithField("registry", registry).Debug("No credentials found, trying anonymous access")
+	}
+
 	// Make request
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -86,7 +103,10 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 
 	// Check response status
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", fmt.Errorf("OCI registry requires authentication (status %d). Private OCI registries are not yet supported", resp.StatusCode)
+		if creds != nil {
+			return "", fmt.Errorf("OCI registry authentication failed (status %d). Check credentials for %s", resp.StatusCode, registry)
+		}
+		return "", fmt.Errorf("OCI registry requires authentication (status %d). No credentials found for %s. Use 'docker login %s' or 'helm registry login %s' or set AG_AUTH_* environment variables", resp.StatusCode, registry, registry, registry)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -131,7 +151,7 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 // parseOCIURL parses an OCI registry URL into registry and repository path
 // Examples:
 //   - "ghcr.io/myorg/charts" -> registry: "ghcr.io", repoPath: "myorg/charts"
-//   - "cr.rnd.homes/helm" -> registry: "cr.rnd.homes", repoPath: "helm"
+//   - "harbor.company.com/helm" -> registry: "harbor.company.com", repoPath: "helm"
 //   - "registry.example.com" -> registry: "registry.example.com", repoPath: ""
 func parseOCIURL(repoURL string) (registry string, repoPath string) {
 	// Remove any trailing slashes

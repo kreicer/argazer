@@ -277,14 +277,132 @@ OCI-based registries identified by the absence of `http://` or `https://` prefix
 repoURL: "ghcr.io/myorg/charts"  # GitHub Container Registry
 chart: "my-application"
 
-repoURL: "cr.example.com/helm"   # Harbor
+repoURL: "harbor.company.com/helm" # Harbor
 chart: "backend"
 
 repoURL: "myregistry.azurecr.io" # Azure Container Registry
 chart: "frontend"
 ```
 
-**Note:** Currently supports public OCI registries with anonymous access. Private registry authentication will be added in a future version.
+## Authentication for Private Repositories
+
+> **⚠️ SECURITY WARNING**  
+> **Do NOT store credentials in plain text config files!**  
+> Config files may be accidentally committed to version control or shared insecurely.  
+> **ALWAYS use environment variables for credentials in production.**
+
+Argazer supports authentication for both traditional Helm repositories and OCI registries using config file or environment variables:
+
+### Option 1: Environment Variables (Recommended)
+
+**Use environment variables for all credentials in production:**
+
+```bash
+# ArgoCD credentials
+export AG_ARGOCD_URL="argocd.example.com"
+export AG_ARGOCD_USERNAME="admin"
+export AG_ARGOCD_PASSWORD="${ARGOCD_PASSWORD}"  # From secrets manager
+
+# Registry credentials
+export AG_AUTH_URL_1="harbor.company.com"
+export AG_AUTH_USER_1="${HARBOR_USER}"
+export AG_AUTH_PASS_1="${HARBOR_PASSWORD}"
+```
+
+### Option 2: Config File (Local Development Only)
+
+**Only for local development. DO NOT commit credentials to git!**
+
+Add to your `config.yaml` (make sure it's in `.gitignore`):
+
+```yaml
+repository_auth:
+  - url: "harbor.company.com"
+    username: "myuser"
+    password: "mypassword"
+  
+  - url: "ghcr.io"
+    username: "github-user"
+    password: "ghp_token"
+```
+
+**Note:** Environment variables take precedence over config file credentials.
+
+### Environment Variables Format
+
+```bash
+# Format: AG_AUTH_URL_<id>, AG_AUTH_USER_<id>, AG_AUTH_PASS_<id>
+# The <id> can be any alphanumeric identifier (numbers or descriptive names)
+
+# Example 1: Using numbers
+export AG_AUTH_URL_1="registry.example.com"
+export AG_AUTH_USER_1="myuser"
+export AG_AUTH_PASS_1="mypassword"
+
+# Example 2: Using descriptive names
+export AG_AUTH_URL_HARBOR="harbor.company.com"
+export AG_AUTH_USER_HARBOR="myuser"
+export AG_AUTH_PASS_HARBOR="mypassword"
+
+# Example 3: GitHub Container Registry
+export AG_AUTH_URL_GHCR="ghcr.io"
+export AG_AUTH_USER_GHCR="github-user"
+export AG_AUTH_PASS_GHCR="ghp_token"
+
+# Example 4: Traditional Helm repo
+export AG_AUTH_URL_CHARTS="charts.private.com"
+export AG_AUTH_USER_CHARTS="helmuser"
+export AG_AUTH_PASS_CHARTS="helmpass"
+
+# Run argazer
+./argazer
+```
+
+### Multiple Registries
+
+You can authenticate to multiple registries at once:
+
+```bash
+export AG_AUTH_URL_1="harbor.company.com"
+export AG_AUTH_USER_1="user1"
+export AG_AUTH_PASS_1="pass1"
+
+export AG_AUTH_URL_2="ghcr.io"
+export AG_AUTH_USER_2="user2"
+export AG_AUTH_PASS_2="pass2"
+
+export AG_AUTH_URL_3="charts.private.com"
+export AG_AUTH_USER_3="user3"
+export AG_AUTH_PASS_3="pass3"
+
+./argazer
+```
+
+### CI/CD Example (Secure)
+
+Always use your CI/CD platform's secrets management:
+
+```yaml
+# GitHub Actions
+- name: Run Argazer
+  env:
+    # ArgoCD credentials from secrets
+    AG_ARGOCD_URL: argocd.example.com
+    AG_ARGOCD_USERNAME: ${{ secrets.ARGOCD_USER }}
+    AG_ARGOCD_PASSWORD: ${{ secrets.ARGOCD_PASS }}
+    
+    # Registry credentials from secrets
+    AG_AUTH_URL_1: registry.example.com
+    AG_AUTH_USER_1: ${{ secrets.REGISTRY_USER }}
+    AG_AUTH_PASS_1: ${{ secrets.REGISTRY_PASS }}
+  run: ./argazer
+```
+
+**Other CI Platforms:**
+- **GitLab CI**: Use `$CI_JOB_TOKEN` or Variables
+- **Jenkins**: Use Credentials Plugin
+- **CircleCI**: Use Contexts/Environment Variables
+- **Azure DevOps**: Use Variable Groups
 
 #### Docker Compose Example
 

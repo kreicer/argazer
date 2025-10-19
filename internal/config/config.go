@@ -39,6 +39,16 @@ type Config struct {
 	// General settings
 	Verbose    bool   `mapstructure:"verbose"`
 	SourceName string `mapstructure:"source_name"` // Name of the source to check in multi-source applications
+
+	// Repository authentication
+	RepositoryAuth []RepositoryAuth `mapstructure:"repository_auth"`
+}
+
+// RepositoryAuth holds authentication for a specific repository or registry
+type RepositoryAuth struct {
+	URL      string `mapstructure:"url"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 // Load loads configuration from various sources

@@ -1,10 +1,22 @@
 # Argazer Configuration Example
 # Copy this file to config.yaml and modify as needed
 
+# ============================================================================
+# SECURITY WARNING: DO NOT COMMIT CREDENTIALS TO VERSION CONTROL!
+# ============================================================================
+# Use environment variables for credentials in production:
+#   export AG_ARGOCD_URL="argocd.example.com"
+#   export AG_ARGOCD_USERNAME="admin"
+#   export AG_ARGOCD_PASSWORD="secret"
+#
+# Config file credentials should only be used for local development.
+# Make sure config.yaml is in your .gitignore!
+# ============================================================================
+
 # ArgoCD Connection Settings
 argocd_url: "https://argocd.example.com"
 argocd_username: "admin"
-argocd_password: "password"
+argocd_password: "password"  # USE ENVIRONMENT VARIABLE INSTEAD!
 argocd_insecure: false  # Set to true to skip TLS verification
 
 # Search Scope
@@ -42,3 +54,17 @@ email_use_tls: true
 # General Settings
 verbose: false
 source_name: "chart-repo"  # For multi-source applications
+
+# Repository Authentication (optional)
+# WARNING: DO NOT store credentials here in production!
+# Use environment variables instead:
+#   export AG_AUTH_URL_1="harbor.company.com"
+#   export AG_AUTH_USER_1="myuser"
+#   export AG_AUTH_PASS_1="mypassword"
+repository_auth:
+  # - url: "harbor.company.com"
+  #   username: "myuser"
+  #   password: "mypassword"  # USE ENVIRONMENT VARIABLE INSTEAD!
+  # - url: "ghcr.io"
+  #   username: "github-user"
+  #   password: "ghp_token"  # USE ENVIRONMENT VARIABLE INSTEAD!

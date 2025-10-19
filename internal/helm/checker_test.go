@@ -3,12 +3,15 @@ package helm
 import (
 	"testing"
 
+	"argazer/internal/auth"
+
 	"github.com/sirupsen/logrus"
 )
 
 func TestNewChecker(t *testing.T) {
 	logger := logrus.NewEntry(logrus.New())
-	checker, err := NewChecker(logger)
+	authProvider, _ := auth.NewProvider(nil, logger)
+	checker, err := NewChecker(authProvider, logger)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -24,7 +27,8 @@ func TestNewChecker(t *testing.T) {
 
 func TestCompareVersions(t *testing.T) {
 	logger := logrus.NewEntry(logrus.New())
-	checker, _ := NewChecker(logger)
+	authProvider, _ := auth.NewProvider(nil, logger)
+	checker, _ := NewChecker(authProvider, logger)
 
 	tests := []struct {
 		v1     string
@@ -48,7 +52,8 @@ func TestCompareVersions(t *testing.T) {
 
 func TestGetLatestVersion(t *testing.T) {
 	logger := logrus.NewEntry(logrus.New())
-	checker, _ := NewChecker(logger)
+	authProvider, _ := auth.NewProvider(nil, logger)
+	checker, _ := NewChecker(authProvider, logger)
 
 	tests := []struct {
 		versions []string

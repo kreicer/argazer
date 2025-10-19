@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"argazer/internal/argocd"
+	"argazer/internal/auth"
 	"argazer/internal/config"
 	"argazer/internal/helm"
 	"argazer/internal/notification"
@@ -123,6 +124,24 @@ type clients struct {
 func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
 	c := &clients{}
 
+	// Create authentication provider
+	authLogger := logger.WithField("component", "auth")
+
+	// Convert config auth to auth provider format
+	var configAuth []auth.ConfigAuth
+	for _, ra := range cfg.RepositoryAuth {
+		configAuth = append(configAuth, auth.ConfigAuth{
+			URL:      ra.URL,
+			Username: ra.Username,
+			Password: ra.Password,
+		})
+	}
+
+	authProvider, err := auth.NewProvider(configAuth, authLogger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create auth provider: %w", err)
+	}
+
 	// Create ArgoCD API client
 	argoLogger := logger.WithField("component", "argocd")
 	argoClient, err := argocd.NewClient(cfg.ArgocdURL, cfg.ArgocdUsername, cfg.ArgocdPassword, cfg.ArgocdInsecure, argoLogger)
@@ -133,7 +152,7 @@ func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Ent
 
 	// Create helm checker
 	helmLogger := logger.WithField("component", "helm")
-	helmChecker, err := helm.NewChecker(helmLogger)
+	helmChecker, err := helm.NewChecker(authProvider, helmLogger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create helm checker: %w", err)
 	}

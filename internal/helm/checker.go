@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"argazer/internal/auth"
+
 	"github.com/Masterminds/semver/v3"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -16,19 +18,21 @@ import (
 
 // Checker checks Helm repositories for new chart versions
 type Checker struct {
-	httpClient *http.Client
-	ociChecker *OCIChecker
-	logger     *logrus.Entry
+	httpClient   *http.Client
+	ociChecker   *OCIChecker
+	authProvider *auth.Provider
+	logger       *logrus.Entry
 }
 
 // NewChecker creates a new Helm checker
-func NewChecker(logger *logrus.Entry) (*Checker, error) {
+func NewChecker(authProvider *auth.Provider, logger *logrus.Entry) (*Checker, error) {
 	return &Checker{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		ociChecker: NewOCIChecker(logger.WithField("type", "oci")),
-		logger:     logger,
+		ociChecker:   NewOCIChecker(authProvider, logger.WithField("type", "oci")),
+		authProvider: authProvider,
+		logger:       logger,
 	}, nil
 }
 
@@ -61,6 +65,12 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 	// Set headers
 	req.Header.Set("User-Agent", "argazer/1.0")
 	req.Header.Set("Accept", "application/x-yaml, application/yaml, text/yaml")
+
+	// Add authentication if available
+	if creds := c.authProvider.GetCredentials(repoURL); creds != nil {
+		req.SetBasicAuth(creds.Username, creds.Password)
+		c.logger.WithField("source", creds.Source).Debug("Using authentication for Helm repository")
+	}
 
 	// Make request
 	resp, err := c.httpClient.Do(req)
