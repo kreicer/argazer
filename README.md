@@ -8,12 +8,14 @@
 ## Features
 
 - **Single-run execution** - Runs once on launch, perfect for CI/CD or cron jobs
+- **OCI Registry Support** - Works with OCI-based Helm repositories (Harbor, GHCR, ACR, etc.)
+- **Traditional Helm Repos** - Supports classic HTTP-based Helm chart repositories
 - **Flexible filtering** - Filter by projects, application names, and labels
 - **Multiple notification channels** - Telegram, Email, or console-only output
 - **Secure ArgoCD connection** - Username/password authentication with optional TLS verification
 - **Environment variable support** - All settings configurable via AG_* environment variables
 - **Structured JSON logging** - All logs output in JSON format for easy parsing and integration
-- **Graceful error handling** - Skips unsupported repositories (OCI, container registries) with clear messages
+- **Graceful error handling** - Clear error messages for unsupported scenarios
 - **Multi-source support** - Handles ArgoCD applications with multiple Helm sources
 
 ## Installation
@@ -257,6 +259,32 @@ docker run --rm \
 # Using docker-compose (see example below)
 docker-compose up
 ```
+
+## Supported Repository Types
+
+Argazer automatically detects and supports both traditional Helm repositories and OCI registries:
+
+### Traditional Helm Repositories
+Classic HTTP-based Helm chart repositories with `index.yaml`:
+```yaml
+repoURL: "https://charts.bitnami.com/bitnami"
+chart: "postgresql"
+```
+
+### OCI Registries (Docker Registry V2 API)
+OCI-based registries identified by the absence of `http://` or `https://` prefix:
+```yaml
+repoURL: "ghcr.io/myorg/charts"  # GitHub Container Registry
+chart: "my-application"
+
+repoURL: "cr.example.com/helm"   # Harbor
+chart: "backend"
+
+repoURL: "myregistry.azurecr.io" # Azure Container Registry
+chart: "frontend"
+```
+
+**Note:** Currently supports public OCI registries with anonymous access. Private registry authentication will be added in a future version.
 
 #### Docker Compose Example
 

@@ -17,6 +17,7 @@ import (
 // Checker checks Helm repositories for new chart versions
 type Checker struct {
 	httpClient *http.Client
+	ociChecker *OCIChecker
 	logger     *logrus.Entry
 }
 
@@ -26,25 +27,20 @@ func NewChecker(logger *logrus.Entry) (*Checker, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		logger: logger,
+		ociChecker: NewOCIChecker(logger.WithField("type", "oci")),
+		logger:     logger,
 	}, nil
 }
 
 // GetLatestVersion gets the latest version of a Helm chart from a repository
 func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName string) (string, error) {
-	// Check if this is an OCI repository
-	if strings.HasPrefix(repoURL, "oci://") {
+	// Check if this is an OCI repository (no http/https prefix)
+	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
 		c.logger.WithFields(logrus.Fields{
 			"repo":  repoURL,
 			"chart": chartName,
-		}).Info("Skipping OCI repository (not supported for version checking)")
-		return "", fmt.Errorf("OCI repositories are not supported for automated version checking")
-	}
-
-	// Ensure repoURL has a scheme (protocol)
-	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
-		repoURL = "https://" + repoURL
-		c.logger.WithField("repo", repoURL).Debug("Added https:// prefix to repository URL")
+		}).Info("Detected OCI repository, using OCI checker")
+		return c.ociChecker.GetLatestVersion(ctx, repoURL, chartName)
 	}
 
 	// Construct the index URL
