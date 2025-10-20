@@ -54,15 +54,35 @@ type RepositoryAuth struct {
 
 // Load loads configuration from various sources
 func Load() (*Config, error) {
-	// Set default values
+	// Set defaults for all config fields so AutomaticEnv can find them
+	// Boolean and numeric defaults
 	viper.SetDefault("verbose", false)
-	viper.SetDefault("source_name", "chart-repo")
-	viper.SetDefault("concurrency", 10) // Default to 10 concurrent workers
-	viper.SetDefault("projects", []string{"*"})
-	viper.SetDefault("app_names", []string{"*"})
 	viper.SetDefault("argocd_insecure", false)
 	viper.SetDefault("email_smtp_port", 587)
 	viper.SetDefault("email_use_tls", true)
+	viper.SetDefault("concurrency", 10)
+
+	// String defaults
+	viper.SetDefault("source_name", "chart-repo")
+	viper.SetDefault("argocd_url", "")
+	viper.SetDefault("argocd_username", "")
+	viper.SetDefault("argocd_password", "")
+	viper.SetDefault("notification_channel", "")
+	viper.SetDefault("telegram_webhook", "")
+	viper.SetDefault("telegram_chat_id", "")
+	viper.SetDefault("email_smtp_host", "")
+	viper.SetDefault("email_smtp_username", "")
+	viper.SetDefault("email_smtp_password", "")
+	viper.SetDefault("email_from", "")
+
+	// Array/slice defaults
+	viper.SetDefault("projects", []string{"*"})
+	viper.SetDefault("app_names", []string{"*"})
+	viper.SetDefault("email_to", []string{})
+
+	// Map defaults
+	viper.SetDefault("labels", map[string]string{})
+	viper.SetDefault("repository_auth", []RepositoryAuth{})
 
 	// Set config file name and paths
 	viper.SetConfigName("config")
