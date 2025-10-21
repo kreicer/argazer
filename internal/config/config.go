@@ -21,7 +21,7 @@ type Config struct {
 	Labels   map[string]string `mapstructure:"labels"`    // Label filters
 
 	// Notification settings
-	NotificationChannel string `mapstructure:"notification_channel"` // "telegram", "email", or empty
+	NotificationChannel string `mapstructure:"notification_channel"` // "telegram", "email", "slack", "teams", "webhook", or empty
 
 	// Telegram settings
 	TelegramWebhook string `mapstructure:"telegram_webhook"`
@@ -35,6 +35,15 @@ type Config struct {
 	EmailFrom         string   `mapstructure:"email_from"`
 	EmailTo           []string `mapstructure:"email_to"`
 	EmailUseTLS       bool     `mapstructure:"email_use_tls"`
+
+	// Slack settings
+	SlackWebhook string `mapstructure:"slack_webhook"`
+
+	// Microsoft Teams settings
+	TeamsWebhook string `mapstructure:"teams_webhook"`
+
+	// Generic Webhook settings
+	WebhookURL string `mapstructure:"webhook_url"`
 
 	// General settings
 	Verbose     bool   `mapstructure:"verbose"`
@@ -74,6 +83,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("email_smtp_username", "")
 	viper.SetDefault("email_smtp_password", "")
 	viper.SetDefault("email_from", "")
+	viper.SetDefault("slack_webhook", "")
+	viper.SetDefault("teams_webhook", "")
+	viper.SetDefault("webhook_url", "")
 
 	// Array/slice defaults
 	viper.SetDefault("projects", []string{"*"})
@@ -135,14 +147,15 @@ func Load() (*Config, error) {
 	}
 
 	// Validate notification channel settings
-	if cfg.NotificationChannel == "telegram" {
+	switch cfg.NotificationChannel {
+	case "telegram":
 		if cfg.TelegramWebhook == "" {
 			return nil, fmt.Errorf("telegram_webhook is required when notification_channel is 'telegram'")
 		}
 		if cfg.TelegramChatID == "" {
 			return nil, fmt.Errorf("telegram_chat_id is required when notification_channel is 'telegram'")
 		}
-	} else if cfg.NotificationChannel == "email" {
+	case "email":
 		if cfg.EmailSmtpHost == "" {
 			return nil, fmt.Errorf("email_smtp_host is required when notification_channel is 'email'")
 		}
@@ -151,6 +164,18 @@ func Load() (*Config, error) {
 		}
 		if len(cfg.EmailTo) == 0 {
 			return nil, fmt.Errorf("email_to is required when notification_channel is 'email'")
+		}
+	case "slack":
+		if cfg.SlackWebhook == "" {
+			return nil, fmt.Errorf("slack_webhook is required when notification_channel is 'slack'")
+		}
+	case "teams":
+		if cfg.TeamsWebhook == "" {
+			return nil, fmt.Errorf("teams_webhook is required when notification_channel is 'teams'")
+		}
+	case "webhook":
+		if cfg.WebhookURL == "" {
+			return nil, fmt.Errorf("webhook_url is required when notification_channel is 'webhook'")
 		}
 	}
 

@@ -33,8 +33,8 @@ labels:
   # team: "platform"
 
 # Notification Channel
-# Options: "telegram", "email", or leave empty for console-only output
-notification_channel: ""  # "telegram" | "email" | ""
+# Options: "telegram", "email", "slack", "teams", "webhook", or leave empty for console-only output
+notification_channel: ""  # "telegram" | "email" | "slack" | "teams" | "webhook" | ""
 
 # Telegram Settings (required if notification_channel is "telegram")
 telegram_webhook: "https://api.telegram.org/botTOKEN/sendMessage"
@@ -50,6 +50,16 @@ email_to:
   - "devops@example.com"
   - "team@example.com"
 email_use_tls: true
+
+# Slack Settings (required if notification_channel is "slack")
+slack_webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Microsoft Teams Settings (required if notification_channel is "teams")
+teams_webhook: "https://outlook.office.com/webhook/YOUR/WEBHOOK/URL"
+
+# Generic Webhook Settings (required if notification_channel is "webhook")
+# Sends a JSON payload with "subject" and "message" fields
+webhook_url: "https://your-webhook-endpoint.example.com/notify"
 
 # General Settings
 verbose: false

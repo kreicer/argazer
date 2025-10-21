@@ -28,7 +28,7 @@ func main() {
 		Use:   "argazer",
 		Short: "ArgoCD Application Gazer - Monitor Helm chart versions in ArgoCD applications",
 		Long: `Argazer connects to ArgoCD via API and checks all applications for Helm chart updates.
-It can filter by projects, application names, and labels, and send notifications via Telegram or Email.`,
+It can filter by projects, application names, and labels, and send notifications via Telegram, Email, Slack, Microsoft Teams, or generic webhooks.`,
 		RunE: run,
 	}
 
@@ -49,7 +49,7 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().Bool("argocd-insecure", false, "Skip TLS verification")
 	rootCmd.Flags().StringSlice("projects", []string{"*"}, "Projects to check (comma-separated, or '*' for all)")
 	rootCmd.Flags().StringSlice("app-names", []string{"*"}, "Application names to check (comma-separated, or '*' for all)")
-	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', or empty for console only")
+	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', 'slack', 'teams', 'webhook', or empty for console only")
 	rootCmd.Flags().Int("concurrency", 10, "Number of concurrent workers for checking applications")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
@@ -180,6 +180,15 @@ func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Ent
 				notifierLogger,
 			)
 			logger.Info("Using Email notifications")
+		case "slack":
+			notifier = notification.NewSlackNotifier(cfg.SlackWebhook, notifierLogger)
+			logger.Info("Using Slack notifications")
+		case "teams":
+			notifier = notification.NewTeamsNotifier(cfg.TeamsWebhook, notifierLogger)
+			logger.Info("Using Microsoft Teams notifications")
+		case "webhook":
+			notifier = notification.NewWebhookNotifier(cfg.WebhookURL, notifierLogger)
+			logger.Info("Using generic webhook notifications")
 		default:
 			logger.Warnf("Unknown notification channel: %s", cfg.NotificationChannel)
 		}

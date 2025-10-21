@@ -12,7 +12,7 @@
 - **OCI Registry Support** - Works with OCI-based Helm repositories (Harbor, GHCR, ACR, etc.)
 - **Traditional Helm Repos** - Supports classic HTTP-based Helm chart repositories
 - **Flexible filtering** - Filter by projects, application names, and labels
-- **Multiple notification channels** - Telegram, Email, or console-only output
+- **Multiple notification channels** - Telegram, Email, Slack, Microsoft Teams, Generic Webhooks, or console-only output
 - **Secure ArgoCD connection** - Username/password authentication with optional TLS verification
 - **Environment variable support** - All settings configurable via AG_* environment variables
 - **Structured JSON logging** - All logs output in JSON format for easy parsing and integration
@@ -66,7 +66,7 @@ labels:  # Optional: filter by labels
   type: "operator"
   environment: "production"
 
-# Notification Channel ("telegram", "email", or empty for console-only)
+# Notification Channel ("telegram", "email", "slack", "teams", "webhook", or empty for console-only)
 notification_channel: "telegram"
 
 # Telegram Settings
@@ -82,6 +82,15 @@ email_from: "argazer@example.com"
 email_to:
   - "devops@example.com"
 email_use_tls: true
+
+# Slack Settings
+slack_webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Microsoft Teams Settings
+teams_webhook: "https://outlook.office.com/webhook/YOUR/WEBHOOK/URL"
+
+# Generic Webhook Settings
+webhook_url: "https://your-webhook-endpoint.example.com/notify"
 
 # General
 verbose: false
@@ -106,7 +115,7 @@ export AG_APP_NAMES="app1,app2"         # or "*" for all
 export AG_LABELS="type=operator,environment=production"  # Format: key1=value1,key2=value2
 
 # Notification
-export AG_NOTIFICATION_CHANNEL="telegram"  # "telegram", "email", or empty
+export AG_NOTIFICATION_CHANNEL="telegram"  # "telegram", "email", "slack", "teams", "webhook", or empty
 
 # Telegram
 export AG_TELEGRAM_WEBHOOK="https://api.telegram.org/botTOKEN/sendMessage"
@@ -120,6 +129,15 @@ export AG_EMAIL_SMTP_PASSWORD="your-app-password"
 export AG_EMAIL_FROM="argazer@example.com"
 export AG_EMAIL_TO="devops@example.com,team@example.com"
 export AG_EMAIL_USE_TLS="true"
+
+# Slack
+export AG_SLACK_WEBHOOK="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Microsoft Teams
+export AG_TEAMS_WEBHOOK="https://outlook.office.com/webhook/YOUR/WEBHOOK/URL"
+
+# Generic Webhook
+export AG_WEBHOOK_URL="https://your-webhook-endpoint.example.com/notify"
 
 # General
 export AG_VERBOSE="false"
@@ -221,6 +239,15 @@ AG_LABELS="type=operator,environment=production" ./argazer
 
 # Send Email notifications
 ./argazer --notification-channel="email"
+
+# Send Slack notifications
+./argazer --notification-channel="slack"
+
+# Send Microsoft Teams notifications
+./argazer --notification-channel="teams"
+
+# Send generic webhook notifications
+./argazer --notification-channel="webhook"
 ```
 
 ### Cron Job Example
@@ -507,6 +534,92 @@ All operational logs are output in structured JSON format:
 {"level":"info","msg":"Argazer completed","total_checked":25,"time":"2025-10-15T12:00:15+00:00"}
 ```
 
+## Notification Setup
+
+### Telegram
+
+**Setting up Telegram notifications:**
+
+1. Create a new bot via [@BotFather](https://t.me/botfather)
+2. Get your bot token (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+3. Get your chat ID by messaging your bot and visiting: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+4. Configure Argazer:
+   ```bash
+   export AG_NOTIFICATION_CHANNEL="telegram"
+   export AG_TELEGRAM_WEBHOOK="https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage"
+   export AG_TELEGRAM_CHAT_ID="<YOUR_CHAT_ID>"
+   ```
+
+### Email
+
+**Setting up Email notifications:**
+
+For Gmail, you need to use an [App Password](https://support.google.com/accounts/answer/185833):
+
+```bash
+export AG_NOTIFICATION_CHANNEL="email"
+export AG_EMAIL_SMTP_HOST="smtp.gmail.com"
+export AG_EMAIL_SMTP_PORT="587"
+export AG_EMAIL_SMTP_USERNAME="your-email@gmail.com"
+export AG_EMAIL_SMTP_PASSWORD="your-app-password"
+export AG_EMAIL_FROM="argazer@example.com"
+export AG_EMAIL_TO="devops@example.com,team@example.com"
+export AG_EMAIL_USE_TLS="true"
+```
+
+For other email providers, adjust the SMTP settings accordingly.
+
+### Slack
+
+**Setting up Slack notifications:**
+
+1. Create a Slack app in your workspace
+2. Enable Incoming Webhooks
+3. Create a webhook URL for a channel
+4. Configure Argazer:
+   ```bash
+   export AG_NOTIFICATION_CHANNEL="slack"
+   export AG_SLACK_WEBHOOK="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+   ```
+
+[Create a Slack App and Webhook](https://api.slack.com/messaging/webhooks)
+
+### Microsoft Teams
+
+**Setting up Microsoft Teams notifications:**
+
+1. Open your Teams channel
+2. Click the three dots (...) next to the channel name
+3. Select "Connectors" → "Incoming Webhook"
+4. Configure the webhook and copy the URL
+5. Configure Argazer:
+   ```bash
+   export AG_NOTIFICATION_CHANNEL="teams"
+   export AG_TEAMS_WEBHOOK="https://outlook.office.com/webhook/YOUR/WEBHOOK/URL"
+   ```
+
+[Learn more about Teams webhooks](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook)
+
+### Generic Webhook
+
+**Setting up generic webhook notifications:**
+
+Argazer sends a POST request with JSON payload:
+```json
+{
+  "subject": "Argazer Notification: 2 Helm Chart Update(s) Available",
+  "message": "app1 (production)\n  Chart: nginx\n  Version: 1.0.0 -> 1.1.0\n..."
+}
+```
+
+Configure your webhook endpoint:
+```bash
+export AG_NOTIFICATION_CHANNEL="webhook"
+export AG_WEBHOOK_URL="https://your-webhook-endpoint.example.com/notify"
+```
+
+The webhook must accept POST requests and return a 2xx status code.
+
 ## Notification Formats
 
 ### Telegram
@@ -561,6 +674,54 @@ backend (production)
   Chart: postgresql
   Version: 11.9.13 -> 11.10.0
   Repo: https://charts.bitnami.com/bitnami
+```
+
+### Slack
+
+Slack messages with markdown formatting for the subject:
+
+```
+*Argazer Notification: 2 Helm Chart Update(s) Available*
+
+frontend (production)
+  Chart: nginx
+  Version: 1.20.0 -> 1.21.0
+  Repo: https://charts.bitnami.com/bitnami
+
+backend (production)
+  Chart: postgresql
+  Version: 11.9.13 -> 11.10.0
+  Repo: https://charts.bitnami.com/bitnami
+```
+
+### Microsoft Teams
+
+Teams MessageCard format with structured layout:
+
+**Title:** Argazer Notification: 2 Helm Chart Update(s) Available  
+**Theme:** Blue card (#0078D7)
+
+```
+frontend (production)
+  Chart: nginx
+  Version: 1.20.0 -> 1.21.0
+  Repo: https://charts.bitnami.com/bitnami
+
+backend (production)
+  Chart: postgresql
+  Version: 11.9.13 -> 11.10.0
+  Repo: https://charts.bitnami.com/bitnami
+```
+
+### Generic Webhook
+
+JSON payload with separate subject and message fields:
+
+```json
+{
+  "subject": "Argazer Notification: 2 Helm Chart Update(s) Available",
+  "message": "frontend (production)\n  Chart: nginx\n  Version: 1.20.0 -> 1.21.0\n..."
+}
 ```
 
 ## Development
