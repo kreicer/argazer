@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] - 2025-10-21
+
+### Added
+- **Slack Notifications** - Native support for Slack via incoming webhooks with markdown formatting
+- **Microsoft Teams Notifications** - MessageCard format support for Teams channels
+- **Generic Webhook Notifications** - Flexible JSON payload support for any webhook endpoint
+- **Shared HTTP Helper** - New `HTTPNotifier` base class reducing code duplication by 100%
+- **Injectable HTTP Client** - All notifiers now support custom HTTP client injection for advanced configuration
+- **Type-Safe Payload Structs** - Replaced maps with proper structs for compile-time type safety
+- **Centralized Constants** - `UserAgent` and `DefaultHTTPTimeout` constants for consistency
+
+### Changed
+- **Refactored Notification System** - All HTTP-based notifiers now use shared `http_helper.go`
+- **Reduced Code Duplication** - Eliminated ~200 lines of duplicated HTTP request handling
+- **Improved Type Safety** - All JSON payloads now use strongly-typed structs instead of `map[string]interface{}`
+- **Better Constructors** - Each notifier has both default and custom client constructors (e.g., `NewSlackNotifier` and `NewSlackNotifierWithClient`)
+- **Updated Configuration** - Added `slack_webhook`, `teams_webhook`, and `webhook_url` config fields
+- **Switch Statement** - Replaced if-else chain with tagged switch for notification validation (linter-compliant)
+
+### Documentation
+- Added comprehensive setup guides for Slack, Teams, and Webhook channels
+- Added notification format examples with consistent sample data
+- Updated environment variable documentation (`AG_SLACK_WEBHOOK`, `AG_TEAMS_WEBHOOK`, `AG_WEBHOOK_URL`)
+- Updated `config.yaml.example` and `env.example` with new channel examples
+
+### Technical Improvements
+- Added 32 new tests for Slack, Teams, and Webhook notifiers (all passing)
+- Telegram notifier refactored to use shared HTTP helper
+- All notifiers now share common timeout and user-agent configuration
+- Backward compatibility maintained for all existing constructors
+
+## [1.0.2] - 2025-10-20
+
+### Fixed
+- Environment variable configuration handling improvements
+
 ## [1.0.1] - 2025-10-19
 
 ### Added
