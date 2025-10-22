@@ -44,6 +44,35 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 		}).Info("Detected OCI repository, using OCI checker")
 		return c.ociChecker.GetLatestVersion(ctx, repoURL, chartName)
 	}
+	return c.getLatestVersionFromRepo(ctx, repoURL, chartName, "", "")
+}
+
+// GetLatestVersionWithConstraint gets the latest version respecting the version constraint
+func (c *Checker) GetLatestVersionWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
+	// Check if this is an OCI repository (no http/https prefix)
+	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
+		c.logger.WithFields(logrus.Fields{
+			"repo":  repoURL,
+			"chart": chartName,
+		}).Info("Detected OCI repository, using OCI checker")
+		// For OCI, get latest and apply constraint logic
+		latest, err := c.ociChecker.GetLatestVersion(ctx, repoURL, chartName)
+		if err != nil {
+			return nil, err
+		}
+		// OCI checker doesn't support constraints yet, so just return the latest
+		// TODO: Add constraint support to OCI checker
+		return &VersionConstraintResult{
+			LatestVersion:              latest,
+			LatestVersionAll:           latest,
+			HasUpdateOutsideConstraint: false,
+		}, nil
+	}
+
+	return c.getLatestVersionFromRepoWithConstraint(ctx, repoURL, chartName, currentVersion, constraint)
+}
+
+func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (string, error) {
 
 	// Construct the index URL
 	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
@@ -130,6 +159,99 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 	}).Debug("Found latest version")
 
 	return latestVersion, nil
+}
+
+// getLatestVersionFromRepoWithConstraint gets the latest version with constraint support
+func (c *Checker) getLatestVersionFromRepoWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
+	// Construct the index URL
+	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
+
+	c.logger.WithFields(logrus.Fields{
+		"repo":       repoURL,
+		"chart":      chartName,
+		"url":        indexURL,
+		"constraint": constraint,
+	}).Debug("Fetching Helm repository index with constraint")
+
+	// Create request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", indexURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("User-Agent", "argazer/1.0")
+	req.Header.Set("Accept", "application/x-yaml, application/yaml, text/yaml")
+
+	// Add authentication if available
+	if creds := c.authProvider.GetCredentials(repoURL); creds != nil {
+		req.SetBasicAuth(creds.Username, creds.Password)
+		c.logger.WithField("source", creds.Source).Debug("Using authentication for Helm repository")
+	}
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch index: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.logger.WithError(err).Warn("Failed to close response body")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("repository does not provide index.yaml (status %d) - likely an OCI/container registry", resp.StatusCode)
+	}
+
+	// Check content type - if it's HTML, this is likely not a Helm repo
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/html") {
+		return nil, fmt.Errorf("repository returned HTML instead of YAML - likely an OCI/container registry, not a traditional Helm repository")
+	}
+
+	// Parse the index
+	index, err := c.parseIndex(resp.Body)
+	if err != nil {
+		if strings.Contains(err.Error(), "<!DOCTY") || strings.Contains(err.Error(), "<html") {
+			return nil, fmt.Errorf("repository is an OCI/container registry, not a traditional Helm repository")
+		}
+		return nil, fmt.Errorf("failed to parse index: %w", err)
+	}
+
+	// Find the chart
+	chart, exists := index.Entries[chartName]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", ErrChartNotFound, chartName)
+	}
+
+	if len(chart) == 0 {
+		return nil, fmt.Errorf("%w: %s (no versions available)", ErrChartNotFound, chartName)
+	}
+
+	// Extract versions
+	versions := make([]string, len(chart))
+	for i, entry := range chart {
+		versions[i] = entry.Version
+	}
+
+	// Apply constraint filtering
+	result, err := findLatestSemverWithConstraint(versions, currentVersion, constraint, c.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine latest version: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"repo":                          repoURL,
+		"chart":                         chartName,
+		"current_version":               currentVersion,
+		"latest_version":                result.LatestVersion,
+		"latest_version_all":            result.LatestVersionAll,
+		"constraint":                    constraint,
+		"has_update_outside_constraint": result.HasUpdateOutsideConstraint,
+	}).Debug("Found latest version with constraint")
+
+	return result, nil
 }
 
 // parseIndex parses the Helm repository index YAML

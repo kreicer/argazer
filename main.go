@@ -51,6 +51,7 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().StringSlice("app-names", []string{"*"}, "Application names to check (comma-separated, or '*' for all)")
 	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', 'slack', 'teams', 'webhook', or empty for console only")
 	rootCmd.Flags().Int("concurrency", 10, "Number of concurrent workers for checking applications")
+	rootCmd.Flags().String("version-constraint", "major", "Version constraint: 'major' (all), 'minor' (same major), 'patch' (same major.minor)")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
@@ -216,14 +217,17 @@ func fetchApplications(ctx context.Context, client *argocd.Client, cfg *config.C
 
 // ApplicationCheckResult holds the result of checking an application
 type ApplicationCheckResult struct {
-	AppName        string
-	Project        string
-	ChartName      string
-	CurrentVersion string
-	LatestVersion  string
-	RepoURL        string
-	HasUpdate      bool
-	Error          error
+	AppName                    string
+	Project                    string
+	ChartName                  string
+	CurrentVersion             string
+	LatestVersion              string
+	RepoURL                    string
+	HasUpdate                  bool
+	Error                      error
+	ConstraintApplied          string // Version constraint used: "major", "minor", or "patch"
+	HasUpdateOutsideConstraint bool   // True if updates exist outside the constraint
+	LatestVersionAll           string // Latest version without constraint (if different)
 }
 
 // checkApplicationsConcurrently checks multiple applications in parallel using a worker pool
@@ -291,39 +295,59 @@ func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecke
 	}
 
 	result := ApplicationCheckResult{
-		AppName:        app.Name,
-		Project:        app.Spec.Project,
-		ChartName:      helmSource.Chart,
-		CurrentVersion: helmSource.TargetRevision,
-		RepoURL:        helmSource.RepoURL,
+		AppName:           app.Name,
+		Project:           app.Spec.Project,
+		ChartName:         helmSource.Chart,
+		CurrentVersion:    helmSource.TargetRevision,
+		RepoURL:           helmSource.RepoURL,
+		ConstraintApplied: cfg.VersionConstraint,
 	}
 
 	appLogger = appLogger.WithFields(logrus.Fields{
 		"chart_name":    helmSource.Chart,
 		"chart_version": helmSource.TargetRevision,
 		"repo_url":      helmSource.RepoURL,
+		"constraint":    cfg.VersionConstraint,
 	})
 
 	appLogger.Info("Found Helm-based application")
 
-	// Check for newer version
-	latestVersion, err := helmChecker.GetLatestVersion(ctx, helmSource.RepoURL, helmSource.Chart)
+	// Check for newer version with constraint
+	constraintResult, err := helmChecker.GetLatestVersionWithConstraint(
+		ctx,
+		helmSource.RepoURL,
+		helmSource.Chart,
+		helmSource.TargetRevision,
+		cfg.VersionConstraint,
+	)
 	if err != nil {
 		appLogger.WithError(err).Error("Failed to check Helm version")
 		result.Error = err
 		return result
 	}
 
-	result.LatestVersion = latestVersion
+	result.LatestVersion = constraintResult.LatestVersion
+	result.LatestVersionAll = constraintResult.LatestVersionAll
+	result.HasUpdateOutsideConstraint = constraintResult.HasUpdateOutsideConstraint
 
-	if latestVersion != helmSource.TargetRevision {
+	if constraintResult.LatestVersion != helmSource.TargetRevision {
 		appLogger.WithFields(logrus.Fields{
-			"current_version": helmSource.TargetRevision,
-			"latest_version":  latestVersion,
+			"current_version":               helmSource.TargetRevision,
+			"latest_version":                constraintResult.LatestVersion,
+			"latest_version_all":            constraintResult.LatestVersionAll,
+			"has_update_outside_constraint": constraintResult.HasUpdateOutsideConstraint,
 		}).Warn("Update available!")
 		result.HasUpdate = true
 	} else {
-		appLogger.Info("Application is up to date")
+		if constraintResult.HasUpdateOutsideConstraint {
+			appLogger.WithFields(logrus.Fields{
+				"current_version":    helmSource.TargetRevision,
+				"latest_version_all": constraintResult.LatestVersionAll,
+				"constraint":         cfg.VersionConstraint,
+			}).Info("Application is up to date within constraint, but updates exist outside constraint")
+		} else {
+			appLogger.Info("Application is up to date")
+		}
 	}
 
 	return result
@@ -386,6 +410,7 @@ func outputResults(results []ApplicationCheckResult) {
 	// Calculate stats in a single loop
 	stats := scanResults{}
 	var updatesAvailable []ApplicationCheckResult
+	var upToDateWithConstraint []ApplicationCheckResult
 	var errors []ApplicationCheckResult
 
 	for _, result := range results {
@@ -404,6 +429,10 @@ func outputResults(results []ApplicationCheckResult) {
 			updatesAvailable = append(updatesAvailable, result)
 		} else {
 			stats.upToDate++
+			// Track apps that are up to date but have updates outside constraint
+			if result.HasUpdateOutsideConstraint {
+				upToDateWithConstraint = append(upToDateWithConstraint, result)
+			}
 		}
 	}
 
@@ -428,6 +457,31 @@ func outputResults(results []ApplicationCheckResult) {
 			fmt.Printf("  Chart: %s\n", result.ChartName)
 			fmt.Printf("  Current Version: %s\n", result.CurrentVersion)
 			fmt.Printf("  Latest Version: %s\n", result.LatestVersion)
+			if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
+				fmt.Printf("  Version Constraint: %s\n", result.ConstraintApplied)
+			}
+			if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" {
+				fmt.Printf("  Note: Version %s available outside constraint\n", result.LatestVersionAll)
+			}
+			fmt.Printf("  Repository: %s\n", result.RepoURL)
+		}
+	}
+
+	// Display apps that are up to date but have updates outside constraint
+	if len(upToDateWithConstraint) > 0 {
+		fmt.Println("\n" + strings.Repeat("-", 80))
+		fmt.Println("UP TO DATE (with updates outside constraint):")
+		fmt.Println(strings.Repeat("-", 80))
+
+		for _, result := range upToDateWithConstraint {
+			fmt.Printf("\nApplication: %s\n", result.AppName)
+			fmt.Printf("  Project: %s\n", result.Project)
+			fmt.Printf("  Chart: %s\n", result.ChartName)
+			fmt.Printf("  Current Version: %s\n", result.CurrentVersion)
+			fmt.Printf("  Status: Up to date within '%s' constraint\n", result.ConstraintApplied)
+			if result.LatestVersionAll != "" {
+				fmt.Printf("  Note: Version %s available outside constraint\n", result.LatestVersionAll)
+			}
 			fmt.Printf("  Repository: %s\n", result.RepoURL)
 		}
 	}
@@ -499,6 +553,14 @@ func buildNotificationMessages(updates []ApplicationCheckResult) []string {
 		app.WriteString(fmt.Sprintf("%s (%s)\n", result.AppName, result.Project))
 		app.WriteString(fmt.Sprintf("  Chart: %s\n", result.ChartName))
 		app.WriteString(fmt.Sprintf("  Version: %s -> %s\n", result.CurrentVersion, result.LatestVersion))
+		// Show constraint if not "major" (default)
+		if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
+			app.WriteString(fmt.Sprintf("  Constraint: %s\n", result.ConstraintApplied))
+		}
+		// Show note if updates exist outside constraint
+		if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" && result.LatestVersionAll != result.LatestVersion {
+			app.WriteString(fmt.Sprintf("  Note: v%s available outside constraint\n", result.LatestVersionAll))
+		}
 		app.WriteString(fmt.Sprintf("  Repo: %s\n", result.RepoURL))
 		app.WriteString("\n")
 		appMessages = append(appMessages, app.String())

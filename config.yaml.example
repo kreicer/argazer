@@ -66,6 +66,13 @@ verbose: false
 source_name: "chart-repo"  # For multi-source applications
 concurrency: 10  # Number of concurrent workers for checking applications
 
+# Version Constraint Strategy
+# Controls which version updates to check for
+# - "major": Check all versions (default) - any major, minor, or patch updates
+# - "minor": Only check same major version - minor and patch updates only
+# - "patch": Only check same major.minor - patch updates only
+version_constraint: "major"
+
 # Repository Authentication (optional)
 # WARNING: DO NOT store credentials here in production!
 # Use environment variables instead:

@@ -46,9 +46,10 @@ type Config struct {
 	WebhookURL string `mapstructure:"webhook_url"`
 
 	// General settings
-	Verbose     bool   `mapstructure:"verbose"`
-	SourceName  string `mapstructure:"source_name"` // Name of the source to check in multi-source applications
-	Concurrency int    `mapstructure:"concurrency"` // Number of concurrent workers for checking applications
+	Verbose           bool   `mapstructure:"verbose"`
+	SourceName        string `mapstructure:"source_name"`        // Name of the source to check in multi-source applications
+	Concurrency       int    `mapstructure:"concurrency"`        // Number of concurrent workers for checking applications
+	VersionConstraint string `mapstructure:"version_constraint"` // Version constraint: "major", "minor", "patch" (default: "major")
 
 	// Repository authentication
 	RepositoryAuth []RepositoryAuth `mapstructure:"repository_auth"`
@@ -73,6 +74,7 @@ func Load() (*Config, error) {
 
 	// String defaults
 	viper.SetDefault("source_name", "chart-repo")
+	viper.SetDefault("version_constraint", "major")
 	viper.SetDefault("argocd_url", "")
 	viper.SetDefault("argocd_username", "")
 	viper.SetDefault("argocd_password", "")
@@ -144,6 +146,15 @@ func Load() (*Config, error) {
 	}
 	if cfg.ArgocdPassword == "" {
 		return nil, fmt.Errorf("argocd_password is required")
+	}
+
+	// Validate version constraint
+	if cfg.VersionConstraint != "" && cfg.VersionConstraint != "major" && cfg.VersionConstraint != "minor" && cfg.VersionConstraint != "patch" {
+		return nil, fmt.Errorf("version_constraint must be one of: 'major', 'minor', 'patch' (got: '%s')", cfg.VersionConstraint)
+	}
+	// Normalize empty to "major"
+	if cfg.VersionConstraint == "" {
+		cfg.VersionConstraint = "major"
 	}
 
 	// Validate notification channel settings

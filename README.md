@@ -24,7 +24,7 @@
 ### From Source
 
 ```bash
-git clone <repository-url>
+git clone git@github.com:kreicer/argazer.git
 cd argazer
 go build -o argazer .
 ```
@@ -96,6 +96,13 @@ webhook_url: "https://your-webhook-endpoint.example.com/notify"
 verbose: false
 source_name: "chart-repo"  # For multi-source apps, specify which source to check
 concurrency: 10  # Number of concurrent workers (default: 10)
+
+# Version Constraint Strategy
+# Controls which version updates to check for:
+# - "major": Check all versions (default)
+# - "minor": Only same major version
+# - "patch": Only same major.minor
+version_constraint: "major"
 ```
 
 ### Environment Variables
@@ -143,6 +150,9 @@ export AG_WEBHOOK_URL="https://your-webhook-endpoint.example.com/notify"
 export AG_VERBOSE="false"
 export AG_SOURCE_NAME="chart-repo"
 export AG_CONCURRENCY="10"  # Number of concurrent workers
+
+# Version Constraint
+export AG_VERSION_CONSTRAINT="major"  # "major", "minor", or "patch"
 ```
 
 ## ArgoCD RBAC Setup
@@ -249,6 +259,51 @@ AG_LABELS="type=operator,environment=production" ./argazer
 # Send generic webhook notifications
 ./argazer --notification-channel="webhook"
 ```
+
+### Version Constraint Examples
+
+Control which version updates to check for based on semantic versioning:
+
+```bash
+# Check all versions (default) - any major, minor, or patch updates
+./argazer --version-constraint="major"
+
+# Only check within same major version - minor and patch updates only
+# Example: Current 1.2.3 → will find 1.3.0, 1.2.5, but skip 2.0.0
+./argazer --version-constraint="minor"
+
+# Only check within same major.minor - patch updates only
+# Example: Current 1.2.3 → will find 1.2.5, but skip 1.3.0 and 2.0.0
+./argazer --version-constraint="patch"
+
+# Using environment variable
+AG_VERSION_CONSTRAINT="minor" ./argazer
+
+# In config file
+# version_constraint: "patch"
+```
+
+**How it works:**
+
+- **`major` (default)**: Check all available versions
+  - Current: `1.2.3` → Finds: `2.0.0`, `1.3.0`, `1.2.5`
+  - Reports latest: `2.0.0`
+
+- **`minor`**: Only check versions with same major number
+  - Current: `1.2.3` → Finds: `1.3.0`, `1.2.5` (skips `2.0.0`)
+  - Reports latest: `1.3.0`
+  - Note: Shows `2.0.0` available outside constraint
+
+- **`patch`**: Only check versions with same major.minor
+  - Current: `1.2.3` → Finds: `1.2.5` (skips `1.3.0`, `2.0.0`)
+  - Reports latest: `1.2.5`
+  - Note: Shows `2.0.0` available outside constraint
+
+**Use cases:**
+
+- **Production stability**: Use `minor` or `patch` to avoid breaking changes
+- **Security patches**: Use `patch` to only get bug fixes
+- **Stay current**: Use `major` (default) to see all updates
 
 ### Cron Job Example
 
