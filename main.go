@@ -129,7 +129,8 @@ type clients struct {
 }
 
 // initializeClients creates all required clients (ArgoCD, Helm, Notifier)
-func initializeClients(ctx context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
+// Context is reserved for future use when client initialization becomes cancellable
+func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
 	c := &clients{}
 
 	// Create authentication provider

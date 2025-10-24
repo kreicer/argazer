@@ -44,7 +44,7 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 		}).Info("Detected OCI repository, using OCI checker")
 		return c.ociChecker.GetLatestVersion(ctx, repoURL, chartName)
 	}
-	return c.getLatestVersionFromRepo(ctx, repoURL, chartName, "", "")
+	return c.getLatestVersionFromRepo(ctx, repoURL, chartName)
 }
 
 // GetLatestVersionWithConstraint gets the latest version respecting the version constraint
@@ -139,7 +139,7 @@ func (c *Checker) getChartVersionsFromRepo(ctx context.Context, repoURL, chartNa
 	return versions, nil
 }
 
-func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (string, error) {
+func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartName string) (string, error) {
 	// Fetch all versions
 	versions, err := c.getChartVersionsFromRepo(ctx, repoURL, chartName)
 	if err != nil {
