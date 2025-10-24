@@ -262,7 +262,7 @@ func TestOutputResults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Just ensure it doesn't panic
 			assert.NotPanics(t, func() {
-				outputResults(tt.results)
+				outputResults(tt.results, "table")
 			})
 		})
 	}
@@ -347,7 +347,7 @@ func TestCheckApplicationsConcurrently(t *testing.T) {
 
 	// Test with empty app list
 	apps := []*v1alpha1.Application{}
-	results := checkApplicationsConcurrently(nil, apps, nil, cfg, logger)
+	results := checkApplicationsConcurrently(context.Background(), apps, nil, cfg, logger)
 	assert.Equal(t, 0, len(results))
 }
 
@@ -358,7 +358,7 @@ func TestCheckApplicationsConcurrently_ZeroConcurrency(t *testing.T) {
 	}
 
 	apps := []*v1alpha1.Application{}
-	results := checkApplicationsConcurrently(nil, apps, nil, cfg, logger)
+	results := checkApplicationsConcurrently(context.Background(), apps, nil, cfg, logger)
 	assert.Equal(t, 0, len(results))
 }
 
@@ -369,7 +369,7 @@ func TestCheckApplicationsConcurrently_NegativeConcurrency(t *testing.T) {
 	}
 
 	apps := []*v1alpha1.Application{}
-	results := checkApplicationsConcurrently(nil, apps, nil, cfg, logger)
+	results := checkApplicationsConcurrently(context.Background(), apps, nil, cfg, logger)
 	assert.Equal(t, 0, len(results))
 }
 

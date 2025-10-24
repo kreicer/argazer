@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2025-10-24
+
+### Added
+- **Multiple Output Formats** - Support for table, JSON, and markdown output formats
+  - New `--output-format` / `-o` flag with options: `table`, `json`, `markdown`
+  - New `AG_OUTPUT_FORMAT` environment variable
+  - New `output_format` config option (default: `table`)
+  - JSON format provides structured output for programmatic processing
+  - Markdown format ideal for reports and documentation
+  - Table format preserves original human-readable output (default)
+- **Version Constraint Strategy** - Control which version updates to check: `major` (all), `minor` (same major), or `patch` (same major.minor)
+  - New `--version-constraint` flag
+  - New `AG_VERSION_CONSTRAINT` environment variable
+  - New `version_constraint` config option (default: `major`)
+- **OCI Constraint Support** - Version constraints now fully supported for OCI registries (Harbor, GHCR, ACR, etc.)
+- **Constraint Awareness in Output** - Console and notifications show constraint info and updates outside constraint
+- **Comprehensive Constraint Tests** - Added 11 comprehensive test cases covering all constraint scenarios
+
+### Changed
+- **Enhanced ApplicationCheckResult** - Added JSON tags for proper serialization
+- **Output Architecture** - Refactored output system with separate formatters for each format type
+- **Refactored Helm Checker** - Extracted `getChartVersionsFromRepo` helper to eliminate code duplication
+- **Refactored OCI Checker** - Extracted `getTagsFromOCI` helper to eliminate code duplication
+- **Reduced Code Duplication** - Eliminated ~160 lines of duplicated fetching/parsing logic
+- **Improved Maintainability** - Constraint logic centralized in `findLatestSemverWithConstraint`
+
+### Documentation
+- Updated README with output format examples and usage
+- Updated `config.yaml.example` with `output_format` documentation
+- Added examples for all three output formats
+- Added comprehensive "Version Constraint Strategy" section to README
+- Added usage examples for all constraint modes
+- Updated `config.yaml.example` with constraint examples
+- Updated `env.example` with `AG_VERSION_CONSTRAINT`
+- Added version constraint use cases and examples
+
+### Technical Improvements
+- Fixed viper flag-to-config mapping using RegisterAlias for proper dash-to-underscore conversion
+- Added proper `context.Background()` usage in tests (replaced nil contexts)
+- All tests passing with new output format parameter
+- All 110+ tests passing with new constraint logic
+- Zero linter errors
+- Clean separation of concerns between fetching and filtering logic
+- Backward compatible - defaults to `major` (all versions)
+
 ## [1.0.3] - 2025-10-21
 
 ### Added

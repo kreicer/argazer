@@ -73,6 +73,13 @@ concurrency: 10  # Number of concurrent workers for checking applications
 # - "patch": Only check same major.minor - patch updates only
 version_constraint: "major"
 
+# Output Format
+# Controls how application check results are displayed
+# - "table": Human-readable formatted text output (default)
+# - "json": JSON structured output for programmatic processing
+# - "markdown": Markdown formatted output for documentation
+output_format: "table"
+
 # Repository Authentication (optional)
 # WARNING: DO NOT store credentials here in production!
 # Use environment variables instead:

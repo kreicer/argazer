@@ -50,6 +50,7 @@ type Config struct {
 	SourceName        string `mapstructure:"source_name"`        // Name of the source to check in multi-source applications
 	Concurrency       int    `mapstructure:"concurrency"`        // Number of concurrent workers for checking applications
 	VersionConstraint string `mapstructure:"version_constraint"` // Version constraint: "major", "minor", "patch" (default: "major")
+	OutputFormat      string `mapstructure:"output_format"`      // Output format: "table", "json", "markdown" (default: "table")
 
 	// Repository authentication
 	RepositoryAuth []RepositoryAuth `mapstructure:"repository_auth"`
@@ -75,6 +76,7 @@ func Load() (*Config, error) {
 	// String defaults
 	viper.SetDefault("source_name", "chart-repo")
 	viper.SetDefault("version_constraint", "major")
+	viper.SetDefault("output_format", "table")
 	viper.SetDefault("argocd_url", "")
 	viper.SetDefault("argocd_username", "")
 	viper.SetDefault("argocd_password", "")
@@ -117,8 +119,20 @@ func Load() (*Config, error) {
 	// AutomaticEnv() automatically binds all config fields to environment variables
 	// with the AG_ prefix (e.g., AG_ARGOCD_URL maps to argocd_url)
 	viper.SetEnvPrefix("AG")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv()
+
+	// Register aliases to map config keys (with underscores) to flag names (with dashes)
+	// RegisterAlias(alias, key) makes the alias name point to the key
+	// When unmarshal looks for "argocd_url", it will find the value stored under "argocd-url"
+	viper.RegisterAlias("argocd_url", "argocd-url")
+	viper.RegisterAlias("argocd_username", "argocd-username")
+	viper.RegisterAlias("argocd_password", "argocd-password")
+	viper.RegisterAlias("argocd_insecure", "argocd-insecure")
+	viper.RegisterAlias("app_names", "app-names")
+	viper.RegisterAlias("notification_channel", "notification-channel")
+	viper.RegisterAlias("version_constraint", "version-constraint")
+	viper.RegisterAlias("output_format", "output-format")
 
 	// Handle labels from environment variable BEFORE unmarshal
 	// Format: AG_LABELS=key1=value1,key2=value2
@@ -155,6 +169,15 @@ func Load() (*Config, error) {
 	// Normalize empty to "major"
 	if cfg.VersionConstraint == "" {
 		cfg.VersionConstraint = "major"
+	}
+
+	// Validate output format
+	if cfg.OutputFormat != "" && cfg.OutputFormat != "table" && cfg.OutputFormat != "json" && cfg.OutputFormat != "markdown" {
+		return nil, fmt.Errorf("output_format must be one of: 'table', 'json', 'markdown' (got: '%s')", cfg.OutputFormat)
+	}
+	// Normalize empty to "table"
+	if cfg.OutputFormat == "" {
+		cfg.OutputFormat = "table"
 	}
 
 	// Validate notification channel settings

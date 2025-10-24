@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -52,6 +54,7 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().String("notification-channel", "", "Notification channel: 'telegram', 'email', 'slack', 'teams', 'webhook', or empty for console only")
 	rootCmd.Flags().Int("concurrency", 10, "Number of concurrent workers for checking applications")
 	rootCmd.Flags().String("version-constraint", "major", "Version constraint: 'major' (all), 'minor' (same major), 'patch' (same major.minor)")
+	rootCmd.Flags().StringP("output-format", "o", "table", "Output format: 'table', 'json', or 'markdown'")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
@@ -101,7 +104,9 @@ func run(cmd *cobra.Command, args []string) error {
 	results := checkApplicationsConcurrently(ctx, apps, clients.helm, cfg, logger)
 
 	// Output results to console
-	outputResults(results)
+	if err := outputResults(results, cfg.OutputFormat); err != nil {
+		return fmt.Errorf("failed to output results: %w", err)
+	}
 
 	// Send notifications if configured
 	if clients.notifier != nil {
@@ -217,17 +222,17 @@ func fetchApplications(ctx context.Context, client *argocd.Client, cfg *config.C
 
 // ApplicationCheckResult holds the result of checking an application
 type ApplicationCheckResult struct {
-	AppName                    string
-	Project                    string
-	ChartName                  string
-	CurrentVersion             string
-	LatestVersion              string
-	RepoURL                    string
-	HasUpdate                  bool
-	Error                      error
-	ConstraintApplied          string // Version constraint used: "major", "minor", or "patch"
-	HasUpdateOutsideConstraint bool   // True if updates exist outside the constraint
-	LatestVersionAll           string // Latest version without constraint (if different)
+	AppName                    string `json:"app_name"`
+	Project                    string `json:"project"`
+	ChartName                  string `json:"chart_name"`
+	CurrentVersion             string `json:"current_version"`
+	LatestVersion              string `json:"latest_version"`
+	RepoURL                    string `json:"repo_url"`
+	HasUpdate                  bool   `json:"has_update"`
+	Error                      error  `json:"error,omitempty"`
+	ConstraintApplied          string `json:"constraint_applied"`            // Version constraint used: "major", "minor", or "patch"
+	HasUpdateOutsideConstraint bool   `json:"has_update_outside_constraint"` // True if updates exist outside the constraint
+	LatestVersionAll           string `json:"latest_version_all,omitempty"`  // Latest version without constraint (if different)
 }
 
 // checkApplicationsConcurrently checks multiple applications in parallel using a worker pool
@@ -405,8 +410,22 @@ type scanResults struct {
 	skipped  int
 }
 
-// outputResults displays the results to console
-func outputResults(results []ApplicationCheckResult) {
+// outputResults displays the results to console in the specified format
+func outputResults(results []ApplicationCheckResult, format string) error {
+	switch format {
+	case "json":
+		return outputJSON(results)
+	case "markdown":
+		return outputMarkdown(results)
+	case "table":
+		return outputTable(results)
+	default:
+		return fmt.Errorf("unknown output format: %s", format)
+	}
+}
+
+// outputTable displays results in a formatted table (original format)
+func outputTable(results []ApplicationCheckResult) error {
 	// Calculate stats in a single loop
 	stats := scanResults{}
 	var updatesAvailable []ApplicationCheckResult
@@ -502,6 +521,178 @@ func outputResults(results []ApplicationCheckResult) {
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 80) + "\n")
+	return nil
+}
+
+// outputJSON displays results in JSON format
+func outputJSON(results []ApplicationCheckResult) error {
+	// Calculate stats in a single loop
+	stats := scanResults{}
+	var updatesAvailable []ApplicationCheckResult
+	var upToDateWithConstraint []ApplicationCheckResult
+	var upToDateNoConstraint []ApplicationCheckResult
+	var errors []ApplicationCheckResult
+
+	for _, result := range results {
+		// Skip empty results (non-Helm apps)
+		if result.AppName == "" {
+			continue
+		}
+
+		stats.total++
+
+		if result.Error != nil {
+			stats.skipped++
+			errors = append(errors, result)
+		} else if result.HasUpdate {
+			stats.updates++
+			updatesAvailable = append(updatesAvailable, result)
+		} else {
+			stats.upToDate++
+			if result.HasUpdateOutsideConstraint {
+				upToDateWithConstraint = append(upToDateWithConstraint, result)
+			} else {
+				upToDateNoConstraint = append(upToDateNoConstraint, result)
+			}
+		}
+	}
+
+	// Create JSON output structure
+	type JSONOutput struct {
+		Summary struct {
+			Total            int `json:"total"`
+			UpToDate         int `json:"up_to_date"`
+			UpdatesAvailable int `json:"updates_available"`
+			Skipped          int `json:"skipped"`
+		} `json:"summary"`
+		UpdatesAvailable        []ApplicationCheckResult `json:"updates_available"`
+		UpToDateWithConstraint  []ApplicationCheckResult `json:"up_to_date_with_constraint"`
+		UpToDateNoUpdateOutside []ApplicationCheckResult `json:"up_to_date"`
+		Errors                  []ApplicationCheckResult `json:"errors"`
+	}
+
+	output := JSONOutput{
+		UpdatesAvailable:        updatesAvailable,
+		UpToDateWithConstraint:  upToDateWithConstraint,
+		UpToDateNoUpdateOutside: upToDateNoConstraint,
+		Errors:                  errors,
+	}
+
+	output.Summary.Total = stats.total
+	output.Summary.UpToDate = stats.upToDate
+	output.Summary.UpdatesAvailable = stats.updates
+	output.Summary.Skipped = stats.skipped
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
+		return fmt.Errorf("failed to encode JSON: %w", err)
+	}
+
+	return nil
+}
+
+// outputMarkdown displays results in Markdown format
+func outputMarkdown(results []ApplicationCheckResult) error {
+	// Calculate stats in a single loop
+	stats := scanResults{}
+	var updatesAvailable []ApplicationCheckResult
+	var upToDateWithConstraint []ApplicationCheckResult
+	var errors []ApplicationCheckResult
+
+	for _, result := range results {
+		// Skip empty results (non-Helm apps)
+		if result.AppName == "" {
+			continue
+		}
+
+		stats.total++
+
+		if result.Error != nil {
+			stats.skipped++
+			errors = append(errors, result)
+		} else if result.HasUpdate {
+			stats.updates++
+			updatesAvailable = append(updatesAvailable, result)
+		} else {
+			stats.upToDate++
+			// Track apps that are up to date but have updates outside constraint
+			if result.HasUpdateOutsideConstraint {
+				upToDateWithConstraint = append(upToDateWithConstraint, result)
+			}
+		}
+	}
+
+	// Display summary
+	fmt.Println("# Argazer Scan Results")
+	fmt.Println()
+	fmt.Println("## Summary")
+	fmt.Println()
+	fmt.Printf("- **Total applications checked:** %d\n", stats.total)
+	fmt.Printf("- **Up to date:** %d\n", stats.upToDate)
+	fmt.Printf("- **Updates available:** %d\n", stats.updates)
+	fmt.Printf("- **Skipped:** %d\n\n", stats.skipped)
+
+	// Display updates
+	if stats.updates > 0 {
+		fmt.Println("## Applications with Updates Available")
+		fmt.Println()
+
+		for _, result := range updatesAvailable {
+			fmt.Printf("### %s\n\n", result.AppName)
+			fmt.Printf("| Field | Value |\n")
+			fmt.Printf("|-------|-------|\n")
+			fmt.Printf("| **Project** | %s |\n", result.Project)
+			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
+			fmt.Printf("| **Current Version** | %s |\n", result.CurrentVersion)
+			fmt.Printf("| **Latest Version** | %s |\n", result.LatestVersion)
+			if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
+				fmt.Printf("| **Version Constraint** | %s |\n", result.ConstraintApplied)
+			}
+			if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" {
+				fmt.Printf("| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
+			}
+			fmt.Printf("| **Repository** | %s |\n\n", result.RepoURL)
+		}
+	}
+
+	// Display apps that are up to date but have updates outside constraint
+	if len(upToDateWithConstraint) > 0 {
+		fmt.Println("## Up to Date (with updates outside constraint)")
+		fmt.Println()
+
+		for _, result := range upToDateWithConstraint {
+			fmt.Printf("### %s\n\n", result.AppName)
+			fmt.Printf("| Field | Value |\n")
+			fmt.Printf("|-------|-------|\n")
+			fmt.Printf("| **Project** | %s |\n", result.Project)
+			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
+			fmt.Printf("| **Current Version** | %s |\n", result.CurrentVersion)
+			fmt.Printf("| **Status** | Up to date within '%s' constraint |\n", result.ConstraintApplied)
+			if result.LatestVersionAll != "" {
+				fmt.Printf("| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
+			}
+			fmt.Printf("| **Repository** | %s |\n\n", result.RepoURL)
+		}
+	}
+
+	// Display skipped applications
+	if stats.skipped > 0 {
+		fmt.Println("## Applications Skipped")
+		fmt.Println()
+
+		for _, result := range errors {
+			fmt.Printf("### %s\n\n", result.AppName)
+			fmt.Printf("| Field | Value |\n")
+			fmt.Printf("|-------|-------|\n")
+			fmt.Printf("| **Project** | %s |\n", result.Project)
+			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
+			fmt.Printf("| **Repository** | %s |\n", result.RepoURL)
+			fmt.Printf("| **Error** | %s |\n\n", result.Error.Error())
+		}
+	}
+
+	return nil
 }
 
 // sendNotifications sends notifications via the configured notifier

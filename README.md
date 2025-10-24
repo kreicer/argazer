@@ -9,6 +9,7 @@
 ## Features
 
 - **Single-run execution** - Runs once on launch, perfect for CI/CD or cron jobs
+- **Multiple output formats** - Table (human-readable), JSON (programmatic), or Markdown (documentation)
 - **OCI Registry Support** - Works with OCI-based Helm repositories (Harbor, GHCR, ACR, etc.)
 - **Traditional Helm Repos** - Supports classic HTTP-based Helm chart repositories
 - **Flexible filtering** - Filter by projects, application names, and labels
@@ -103,6 +104,13 @@ concurrency: 10  # Number of concurrent workers (default: 10)
 # - "minor": Only same major version
 # - "patch": Only same major.minor
 version_constraint: "major"
+
+# Output Format
+# Controls how results are displayed:
+# - "table": Human-readable formatted text (default)
+# - "json": JSON structured output for automation
+# - "markdown": Markdown formatted output for docs
+output_format: "table"
 ```
 
 ### Environment Variables
@@ -153,6 +161,9 @@ export AG_CONCURRENCY="10"  # Number of concurrent workers
 
 # Version Constraint
 export AG_VERSION_CONSTRAINT="major"  # "major", "minor", or "patch"
+
+# Output Format
+export AG_OUTPUT_FORMAT="table"  # "table", "json", or "markdown"
 ```
 
 ## ArgoCD RBAC Setup
@@ -259,6 +270,46 @@ AG_LABELS="type=operator,environment=production" ./argazer
 # Send generic webhook notifications
 ./argazer --notification-channel="webhook"
 ```
+
+### Output Format Examples
+
+Control how results are displayed - choose the format that best fits your use case:
+
+```bash
+# Table format (default) - human-readable formatted text
+./argazer --output-format="table"
+./argazer -o table
+
+# JSON format - structured output for automation/CI/CD
+./argazer --output-format="json"
+./argazer -o json | jq '.summary'
+
+# Markdown format - formatted output for documentation/reports
+./argazer --output-format="markdown" > report.md
+./argazer -o markdown
+
+# Using environment variable
+AG_OUTPUT_FORMAT="json" ./argazer
+
+# In config file
+# output_format: "markdown"
+```
+
+**Format Details:**
+
+- **`table`** (default): Human-readable formatted text with sections and borders
+  - Best for: Console viewing, manual monitoring
+  - Example: Formatted sections with headers, borders, and indented details
+
+- **`json`**: Structured JSON with summary and categorized results
+  - Best for: CI/CD pipelines, automation, programmatic parsing
+  - Example: `{"summary": {"total": 7, "updates_available": 2}, ...}`
+  - Pipe to `jq` for filtering: `./argazer -o json | jq '.updates_available'`
+
+- **`markdown`**: Clean markdown with tables and headers
+  - Best for: Documentation, reports, GitHub/GitLab issues
+  - Example: Markdown headers, tables, and formatted sections
+  - Save to file: `./argazer -o markdown > weekly-report.md`
 
 ### Version Constraint Examples
 
@@ -529,9 +580,11 @@ EOF
 docker-compose up
 ```
 
-## Output Example
+## Output Examples
 
-### Console Output
+### Table Format (Default)
+
+Human-readable formatted text with sections and borders:
 
 ```
 ================================================================================
@@ -575,9 +628,102 @@ Application: internal-app
 ================================================================================
 ```
 
+### JSON Format
+
+Structured output perfect for automation and CI/CD pipelines:
+
+```json
+{
+  "summary": {
+    "total": 7,
+    "up_to_date": 4,
+    "updates_available": 2,
+    "skipped": 1
+  },
+  "updates_available": [
+    {
+      "app_name": "frontend",
+      "project": "production",
+      "chart_name": "nginx",
+      "current_version": "1.20.0",
+      "latest_version": "1.21.0",
+      "repo_url": "https://charts.bitnami.com/bitnami",
+      "has_update": true,
+      "constraint_applied": "major"
+    },
+    {
+      "app_name": "backend",
+      "project": "production",
+      "chart_name": "postgresql",
+      "current_version": "11.9.13",
+      "latest_version": "11.10.0",
+      "repo_url": "https://charts.bitnami.com/bitnami",
+      "has_update": true,
+      "constraint_applied": "major"
+    }
+  ],
+  "up_to_date": [...],
+  "errors": [...]
+}
+```
+
+Use with `jq` for filtering:
+```bash
+# Get only apps with updates
+./argazer -o json | jq '.updates_available[]'
+
+# Count updates
+./argazer -o json | jq '.summary.updates_available'
+
+# Get app names with updates
+./argazer -o json | jq -r '.updates_available[].app_name'
+```
+
+### Markdown Format
+
+Clean markdown output ideal for reports and documentation:
+
+```markdown
+# Argazer Scan Results
+
+## Summary
+
+- **Total applications checked:** 7
+- **Up to date:** 4
+- **Updates available:** 2
+- **Skipped:** 1
+
+## Applications with Updates Available
+
+### frontend
+
+| Field | Value |
+|-------|-------|
+| **Project** | production |
+| **Chart** | nginx |
+| **Current Version** | 1.20.0 |
+| **Latest Version** | 1.21.0 |
+| **Repository** | https://charts.bitnami.com/bitnami |
+
+### backend
+
+| Field | Value |
+|-------|-------|
+| **Project** | production |
+| **Chart** | postgresql |
+| **Current Version** | 11.9.13 |
+| **Latest Version** | 11.10.0 |
+| **Repository** | https://charts.bitnami.com/bitnami |
+```
+
+Save to file for reports:
+```bash
+./argazer -o markdown > weekly-helm-updates.md
+```
+
 ### JSON Logs
 
-All operational logs are output in structured JSON format:
+All operational logs (separate from output) are in structured JSON format:
 
 ```json
 {"level":"info","msg":"Starting Argazer","argocd_url":"argo.example.com","projects":["production"],"app_names":["*"],"labels":{"type":"operator"},"time":"2025-10-15T12:00:00+00:00"}

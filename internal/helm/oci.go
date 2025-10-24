@@ -38,12 +38,12 @@ type TagsResponse struct {
 	Tags []string `json:"tags"`
 }
 
-// GetLatestVersion gets the latest version of a Helm chart from an OCI registry
-func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName string) (string, error) {
+// getTagsFromOCI fetches all available tags for a chart from an OCI registry
+func (o *OCIChecker) getTagsFromOCI(ctx context.Context, repoURL, chartName string) ([]string, error) {
 	o.logger.WithFields(logrus.Fields{
 		"repo":  repoURL,
 		"chart": chartName,
-	}).Debug("Checking OCI registry for latest version")
+	}).Debug("Checking OCI registry for tags")
 
 	// Parse OCI registry URL and build repository path
 	registry, repoPath := parseOCIURL(repoURL)
@@ -77,7 +77,7 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "GET", tagsURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -100,7 +100,7 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	// Make request
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch tags from OCI registry: %w", err)
+		return nil, fmt.Errorf("failed to fetch tags from OCI registry: %w", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -111,32 +111,32 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	// Check response status
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		if creds != nil {
-			return "", fmt.Errorf("%w for %s (status %d): check credentials", ErrAuthenticationFailed, registry, resp.StatusCode)
+			return nil, fmt.Errorf("%w for %s (status %d): check credentials", ErrAuthenticationFailed, registry, resp.StatusCode)
 		}
-		return "", fmt.Errorf("%w for %s (status %d): set AG_AUTH_* environment variables or add to repository_auth in config file", ErrAuthenticationFailed, registry, resp.StatusCode)
+		return nil, fmt.Errorf("%w for %s (status %d): set AG_AUTH_* environment variables or add to repository_auth in config file", ErrAuthenticationFailed, registry, resp.StatusCode)
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%w: %s/%s", ErrChartNotFound, registry, chartName)
+		return nil, fmt.Errorf("%w: %s/%s", ErrChartNotFound, registry, chartName)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OCI registry returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("OCI registry returned status %d", resp.StatusCode)
 	}
 
 	// Parse response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	var tagsResp TagsResponse
 	if err := json.Unmarshal(body, &tagsResp); err != nil {
-		return "", fmt.Errorf("failed to parse tags response: %w", err)
+		return nil, fmt.Errorf("failed to parse tags response: %w", err)
 	}
 
 	if len(tagsResp.Tags) == 0 {
-		return "", fmt.Errorf("no tags found for chart %s in OCI registry", chartName)
+		return nil, fmt.Errorf("no tags found for chart %s in OCI registry", chartName)
 	}
 
 	o.logger.WithFields(logrus.Fields{
@@ -162,7 +162,18 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	}
 
 	if len(candidateTags) == 0 {
-		return "", fmt.Errorf("%w: all tags were filtered out", ErrNoValidVersions)
+		return nil, fmt.Errorf("%w: all tags were filtered out", ErrNoValidVersions)
+	}
+
+	return candidateTags, nil
+}
+
+// GetLatestVersion gets the latest version of a Helm chart from an OCI registry
+func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName string) (string, error) {
+	// Fetch all tags using shared helper
+	candidateTags, err := o.getTagsFromOCI(ctx, repoURL, chartName)
+	if err != nil {
+		return "", err
 	}
 
 	// Use shared utility function to find the latest semantic version
@@ -178,6 +189,38 @@ func (o *OCIChecker) GetLatestVersion(ctx context.Context, repoURL, chartName st
 	}).Debug("Found latest version in OCI registry")
 
 	return latestVersion, nil
+}
+
+// GetLatestVersionWithConstraint gets the latest version respecting the version constraint
+func (o *OCIChecker) GetLatestVersionWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
+	o.logger.WithFields(logrus.Fields{
+		"repo":       repoURL,
+		"chart":      chartName,
+		"constraint": constraint,
+	}).Debug("Checking OCI registry for latest version with constraint")
+
+	// Fetch all tags using shared helper
+	candidateTags, err := o.getTagsFromOCI(ctx, repoURL, chartName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply constraint filtering
+	result, err := findLatestSemverWithConstraint(candidateTags, currentVersion, constraint, o.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine latest version: %w", err)
+	}
+
+	o.logger.WithFields(logrus.Fields{
+		"chart":                         chartName,
+		"current_version":               currentVersion,
+		"latest_version":                result.LatestVersion,
+		"latest_version_all":            result.LatestVersionAll,
+		"constraint":                    constraint,
+		"has_update_outside_constraint": result.HasUpdateOutsideConstraint,
+	}).Debug("Found latest version in OCI registry with constraint")
+
+	return result, nil
 }
 
 // parseOCIURL parses an OCI registry URL into registry and repository path

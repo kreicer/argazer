@@ -55,25 +55,15 @@ func (c *Checker) GetLatestVersionWithConstraint(ctx context.Context, repoURL, c
 			"repo":  repoURL,
 			"chart": chartName,
 		}).Info("Detected OCI repository, using OCI checker")
-		// For OCI, get latest and apply constraint logic
-		latest, err := c.ociChecker.GetLatestVersion(ctx, repoURL, chartName)
-		if err != nil {
-			return nil, err
-		}
-		// OCI checker doesn't support constraints yet, so just return the latest
-		// TODO: Add constraint support to OCI checker
-		return &VersionConstraintResult{
-			LatestVersion:              latest,
-			LatestVersionAll:           latest,
-			HasUpdateOutsideConstraint: false,
-		}, nil
+		// Use OCI checker with constraint support
+		return c.ociChecker.GetLatestVersionWithConstraint(ctx, repoURL, chartName, currentVersion, constraint)
 	}
 
 	return c.getLatestVersionFromRepoWithConstraint(ctx, repoURL, chartName, currentVersion, constraint)
 }
 
-func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (string, error) {
-
+// getChartVersionsFromRepo fetches and returns all available versions for a chart from a Helm repository
+func (c *Checker) getChartVersionsFromRepo(ctx context.Context, repoURL, chartName string) ([]string, error) {
 	// Construct the index URL
 	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
 
@@ -82,96 +72,6 @@ func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartNa
 		"chart": chartName,
 		"url":   indexURL,
 	}).Debug("Fetching Helm repository index")
-
-	// Create request with context
-	req, err := http.NewRequestWithContext(ctx, "GET", indexURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("User-Agent", "argazer/1.0")
-	req.Header.Set("Accept", "application/x-yaml, application/yaml, text/yaml")
-
-	// Add authentication if available
-	if creds := c.authProvider.GetCredentials(repoURL); creds != nil {
-		req.SetBasicAuth(creds.Username, creds.Password)
-		c.logger.WithField("source", creds.Source).Debug("Using authentication for Helm repository")
-	}
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch index: %w", err)
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			c.logger.WithError(err).Warn("Failed to close response body")
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("repository does not provide index.yaml (status %d) - likely an OCI/container registry", resp.StatusCode)
-	}
-
-	// Check content type - if it's HTML, this is likely not a Helm repo
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "text/html") {
-		return "", fmt.Errorf("repository returned HTML instead of YAML - likely an OCI/container registry, not a traditional Helm repository")
-	}
-
-	// Parse the index
-	index, err := c.parseIndex(resp.Body)
-	if err != nil {
-		// Check if error is due to HTML response (common for OCI repos)
-		if strings.Contains(err.Error(), "<!DOCTY") || strings.Contains(err.Error(), "<html") {
-			return "", fmt.Errorf("repository is an OCI/container registry, not a traditional Helm repository")
-		}
-		return "", fmt.Errorf("failed to parse index: %w", err)
-	}
-
-	// Find the chart
-	chart, exists := index.Entries[chartName]
-	if !exists {
-		return "", fmt.Errorf("%w: %s", ErrChartNotFound, chartName)
-	}
-
-	if len(chart) == 0 {
-		return "", fmt.Errorf("%w: %s (no versions available)", ErrChartNotFound, chartName)
-	}
-
-	// Sort versions and get the latest
-	versions := make([]string, len(chart))
-	for i, entry := range chart {
-		versions[i] = entry.Version
-	}
-
-	// Use shared utility function for finding latest semantic version
-	latestVersion, err := findLatestSemver(versions, c.logger)
-	if err != nil {
-		return "", fmt.Errorf("failed to determine latest version: %w", err)
-	}
-
-	c.logger.WithFields(logrus.Fields{
-		"repo":           repoURL,
-		"chart":          chartName,
-		"latest_version": latestVersion,
-	}).Debug("Found latest version")
-
-	return latestVersion, nil
-}
-
-// getLatestVersionFromRepoWithConstraint gets the latest version with constraint support
-func (c *Checker) getLatestVersionFromRepoWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
-	// Construct the index URL
-	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
-
-	c.logger.WithFields(logrus.Fields{
-		"repo":       repoURL,
-		"chart":      chartName,
-		"url":        indexURL,
-		"constraint": constraint,
-	}).Debug("Fetching Helm repository index with constraint")
 
 	// Create request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", indexURL, nil)
@@ -213,6 +113,7 @@ func (c *Checker) getLatestVersionFromRepoWithConstraint(ctx context.Context, re
 	// Parse the index
 	index, err := c.parseIndex(resp.Body)
 	if err != nil {
+		// Check if error is due to HTML response (common for OCI repos)
 		if strings.Contains(err.Error(), "<!DOCTY") || strings.Contains(err.Error(), "<html") {
 			return nil, fmt.Errorf("repository is an OCI/container registry, not a traditional Helm repository")
 		}
@@ -233,6 +134,45 @@ func (c *Checker) getLatestVersionFromRepoWithConstraint(ctx context.Context, re
 	versions := make([]string, len(chart))
 	for i, entry := range chart {
 		versions[i] = entry.Version
+	}
+
+	return versions, nil
+}
+
+func (c *Checker) getLatestVersionFromRepo(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (string, error) {
+	// Fetch all versions
+	versions, err := c.getChartVersionsFromRepo(ctx, repoURL, chartName)
+	if err != nil {
+		return "", err
+	}
+
+	// Use shared utility function for finding latest semantic version
+	latestVersion, err := findLatestSemver(versions, c.logger)
+	if err != nil {
+		return "", fmt.Errorf("failed to determine latest version: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"repo":           repoURL,
+		"chart":          chartName,
+		"latest_version": latestVersion,
+	}).Debug("Found latest version")
+
+	return latestVersion, nil
+}
+
+// getLatestVersionFromRepoWithConstraint gets the latest version with constraint support
+func (c *Checker) getLatestVersionFromRepoWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
+	c.logger.WithFields(logrus.Fields{
+		"repo":       repoURL,
+		"chart":      chartName,
+		"constraint": constraint,
+	}).Debug("Fetching Helm repository index with constraint")
+
+	// Fetch all versions using shared helper
+	versions, err := c.getChartVersionsFromRepo(ctx, repoURL, chartName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Apply constraint filtering
