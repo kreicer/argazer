@@ -32,12 +32,17 @@ go build -o argazer .
 
 ### Using Docker
 
-```bash
-# Build the image
-docker build -t argazer:latest .
+Multi-architecture images available for **AMD64** and **ARM64** (Apple Silicon, Raspberry Pi, AWS Graviton, etc.):
 
-# Or use pre-built image (if available)
-docker pull ghcr.io/your-org/argazer:latest
+```bash
+# Pull the latest image (automatically selects the right architecture)
+docker pull ghcr.io/kreicer/argazer:latest
+
+# Or specific version
+docker pull ghcr.io/kreicer/argazer:v1.0.4
+
+# Or build locally
+docker build -t argazer:latest .
 ```
 
 ## Configuration
@@ -379,7 +384,7 @@ Add to your crontab to run every hour:
 # Using config file (mount to /app/config.yaml)
 docker run --rm \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  argazer:latest
+  ghcr.io/kreicer/argazer:latest
 
 # Using environment variables only
 docker run --rm \
@@ -389,17 +394,22 @@ docker run --rm \
   -e AG_NOTIFICATION_CHANNEL="telegram" \
   -e AG_TELEGRAM_WEBHOOK="https://api.telegram.org/bot.../sendMessage" \
   -e AG_TELEGRAM_CHAT_ID="123456789" \
-  argazer:latest
+  ghcr.io/kreicer/argazer:latest
 
 # Override default config path
 docker run --rm \
   -v $(pwd)/custom-config.yaml:/config/argazer.yaml:ro \
-  argazer:latest --config /config/argazer.yaml
+  ghcr.io/kreicer/argazer:latest --config /config/argazer.yaml
 
-# With verbose logging
+# With verbose logging and text logs for debugging
 docker run --rm \
   -v $(pwd)/config.yaml:/app/config.yaml:ro \
-  argazer:latest --verbose
+  ghcr.io/kreicer/argazer:latest --verbose --log-format=text
+
+# Run with specific architecture (if needed)
+docker run --rm --platform linux/arm64 \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  ghcr.io/kreicer/argazer:latest
 
 # Using docker-compose (see example below)
 docker-compose up
@@ -558,8 +568,9 @@ version: '3.8'
 
 services:
   argazer:
-    image: argazer:latest
-    build: .
+    image: ghcr.io/kreicer/argazer:latest
+    # Or build locally:
+    # build: .
     environment:
       - AG_ARGOCD_URL=argocd.example.com
       - AG_ARGOCD_USERNAME=admin
@@ -569,6 +580,8 @@ services:
       - AG_NOTIFICATION_CHANNEL=telegram
       - AG_TELEGRAM_WEBHOOK=${TELEGRAM_WEBHOOK}
       - AG_TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - AG_OUTPUT_FORMAT=json  # table, json, or markdown
+      - AG_LOG_FORMAT=json  # json or text
     # Or mount config file instead
     # volumes:
     #   - ./config.yaml:/app/config.yaml:ro
@@ -602,8 +615,8 @@ ARGAZER SCAN RESULTS
 
 Total applications checked: 25
 
-Up to date: 20
-Updates available: 3
+Up to date: 18
+Updates available: 5
 Skipped: 2
 
 --------------------------------------------------------------------------------
@@ -615,6 +628,7 @@ Application: frontend
   Chart: nginx
   Current Version: 1.20.0
   Latest Version: 1.21.0
+  Version Constraint: minor
   Repository: https://charts.bitnami.com/bitnami
 
 Application: backend
@@ -624,6 +638,36 @@ Application: backend
   Latest Version: 11.10.0
   Repository: https://charts.bitnami.com/bitnami
 
+Application: api
+  Project: staging
+  Chart: fastapi
+  Current Version: 0.95.0
+  Latest Version: 0.95.2
+  Version Constraint: patch
+  Repository: oci://ghcr.io/myorg/charts
+
+--------------------------------------------------------------------------------
+UP TO DATE (with updates outside constraint):
+--------------------------------------------------------------------------------
+
+Application: monitoring
+  Project: platform
+  Chart: grafana
+  Current Version: 6.50.0
+  Status: Up to date within 'minor' constraint
+  Latest (minor): 6.50.0
+  Note: Version 7.0.0 available outside constraint
+  Repository: https://grafana.github.io/helm-charts
+
+Application: logging
+  Project: platform
+  Chart: loki
+  Current Version: 5.8.0
+  Status: Up to date within 'patch' constraint
+  Latest (patch): 5.8.0
+  Note: Version 5.9.2 available outside constraint
+  Repository: https://grafana.github.io/helm-charts
+
 --------------------------------------------------------------------------------
 APPLICATIONS SKIPPED (Unable to check):
 --------------------------------------------------------------------------------
@@ -632,7 +676,13 @@ Application: internal-app
   Project: platform
   Chart: custom-chart
   Repository: cr.example.com/helm
-  Reason: repository returned HTML instead of YAML - likely an OCI/container registry, not a traditional Helm repository
+  Reason: failed to fetch chart versions: 404 Not Found
+
+Application: legacy-service
+  Project: legacy
+  Chart: old-app
+  Repository: https://charts.deprecated.io
+  Reason: no valid semantic versions found in repository
 
 ================================================================================
 ```
@@ -644,10 +694,10 @@ Structured output perfect for automation and CI/CD pipelines:
 ```json
 {
   "summary": {
-    "total": 7,
-    "up_to_date": 4,
-    "updates_available": 2,
-    "skipped": 1
+    "total": 25,
+    "up_to_date": 18,
+    "updates_available": 5,
+    "skipped": 2
   },
   "updates_available": [
     {
@@ -658,25 +708,62 @@ Structured output perfect for automation and CI/CD pipelines:
       "latest_version": "1.21.0",
       "repo_url": "https://charts.bitnami.com/bitnami",
       "has_update": true,
-      "constraint_applied": "major"
+      "constraint_applied": "minor",
+      "has_update_outside_constraint": false
     },
     {
-      "app_name": "backend",
-      "project": "production",
-      "chart_name": "postgresql",
-      "current_version": "11.9.13",
-      "latest_version": "11.10.0",
-      "repo_url": "https://charts.bitnami.com/bitnami",
+      "app_name": "api",
+      "project": "staging",
+      "chart_name": "fastapi",
+      "current_version": "0.95.0",
+      "latest_version": "0.95.2",
+      "repo_url": "oci://ghcr.io/myorg/charts",
       "has_update": true,
-      "constraint_applied": "major"
+      "constraint_applied": "patch",
+      "has_update_outside_constraint": true,
+      "latest_version_all": "0.96.0"
     }
   ],
-  "up_to_date": [...],
-  "errors": [...]
+  "up_to_date_with_constraint": [
+    {
+      "app_name": "monitoring",
+      "project": "platform",
+      "chart_name": "grafana",
+      "current_version": "6.50.0",
+      "latest_version": "6.50.0",
+      "repo_url": "https://grafana.github.io/helm-charts",
+      "has_update": false,
+      "constraint_applied": "minor",
+      "has_update_outside_constraint": true,
+      "latest_version_all": "7.0.0"
+    }
+  ],
+  "up_to_date": [
+    {
+      "app_name": "database",
+      "project": "production",
+      "chart_name": "postgresql",
+      "current_version": "12.0.0",
+      "latest_version": "12.0.0",
+      "repo_url": "https://charts.bitnami.com/bitnami",
+      "has_update": false,
+      "constraint_applied": "major",
+      "has_update_outside_constraint": false
+    }
+  ],
+  "errors": [
+    {
+      "app_name": "internal-app",
+      "project": "platform",
+      "chart_name": "custom-chart",
+      "repo_url": "cr.example.com/helm",
+      "error": "failed to fetch chart versions: 404 Not Found"
+    }
+  ]
 }
 ```
 
-Use with `jq` for filtering:
+Use with `jq` for filtering and analysis:
 ```bash
 # Get only apps with updates
 ./argazer -o json | jq '.updates_available[]'
@@ -686,6 +773,15 @@ Use with `jq` for filtering:
 
 # Get app names with updates
 ./argazer -o json | jq -r '.updates_available[].app_name'
+
+# Find apps with updates outside their constraint
+./argazer -o json | jq '.updates_available[] | select(.has_update_outside_constraint == true)'
+
+# Get apps using patch constraint
+./argazer -o json | jq '.updates_available[] | select(.constraint_applied == "patch")'
+
+# Check if any OCI registry apps have updates
+./argazer -o json | jq '.updates_available[] | select(.repo_url | startswith("oci://"))'
 ```
 
 ### Markdown Format
@@ -697,10 +793,10 @@ Clean markdown output ideal for reports and documentation:
 
 ## Summary
 
-- **Total applications checked:** 7
-- **Up to date:** 4
-- **Updates available:** 2
-- **Skipped:** 1
+- **Total applications checked:** 25
+- **Up to date:** 18
+- **Updates available:** 5
+- **Skipped:** 2
 
 ## Applications with Updates Available
 
@@ -712,17 +808,45 @@ Clean markdown output ideal for reports and documentation:
 | **Chart** | nginx |
 | **Current Version** | 1.20.0 |
 | **Latest Version** | 1.21.0 |
+| **Version Constraint** | minor |
 | **Repository** | https://charts.bitnami.com/bitnami |
 
-### backend
+### api
 
 | Field | Value |
 |-------|-------|
-| **Project** | production |
-| **Chart** | postgresql |
-| **Current Version** | 11.9.13 |
-| **Latest Version** | 11.10.0 |
-| **Repository** | https://charts.bitnami.com/bitnami |
+| **Project** | staging |
+| **Chart** | fastapi |
+| **Current Version** | 0.95.0 |
+| **Latest Version** | 0.95.2 |
+| **Version Constraint** | patch |
+| **Note** | Version 0.96.0 available outside constraint |
+| **Repository** | oci://ghcr.io/myorg/charts |
+
+## Up to Date (with updates outside constraint)
+
+### monitoring
+
+| Field | Value |
+|-------|-------|
+| **Project** | platform |
+| **Chart** | grafana |
+| **Current Version** | 6.50.0 |
+| **Status** | Up to date within 'minor' constraint |
+| **Latest (minor)** | 6.50.0 |
+| **Note** | Version 7.0.0 available outside constraint |
+| **Repository** | https://grafana.github.io/helm-charts |
+
+## Applications Skipped
+
+### internal-app
+
+| Field | Value |
+|-------|-------|
+| **Project** | platform |
+| **Chart** | custom-chart |
+| **Repository** | cr.example.com/helm |
+| **Reason** | failed to fetch chart versions: 404 Not Found |
 ```
 
 Save to file for reports:
@@ -1009,7 +1133,7 @@ jobs:
 ```yaml
 argazer-check:
   stage: check
-  image: ghcr.io/your-org/argazer:latest
+  image: ghcr.io/kreicer/argazer:latest
   script:
     - argazer
   variables:
