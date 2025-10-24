@@ -7,6 +7,26 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Output format constants
+const (
+	OutputFormatTable    = "table"
+	OutputFormatJSON     = "json"
+	OutputFormatMarkdown = "markdown"
+)
+
+// Version constraint constants
+const (
+	VersionConstraintMajor = "major"
+	VersionConstraintMinor = "minor"
+	VersionConstraintPatch = "patch"
+)
+
+// Log format constants
+const (
+	LogFormatJSON = "json"
+	LogFormatText = "text"
+)
+
 // Config holds the application configuration
 type Config struct {
 	// ArgoCD connection settings
@@ -47,6 +67,7 @@ type Config struct {
 
 	// General settings
 	Verbose           bool   `mapstructure:"verbose"`
+	LogFormat         string `mapstructure:"log_format"`         // Log format: "json" or "text" (default: "json")
 	SourceName        string `mapstructure:"source_name"`        // Name of the source to check in multi-source applications
 	Concurrency       int    `mapstructure:"concurrency"`        // Number of concurrent workers for checking applications
 	VersionConstraint string `mapstructure:"version_constraint"` // Version constraint: "major", "minor", "patch" (default: "major")
@@ -75,8 +96,9 @@ func Load() (*Config, error) {
 
 	// String defaults
 	viper.SetDefault("source_name", "chart-repo")
-	viper.SetDefault("version_constraint", "major")
-	viper.SetDefault("output_format", "table")
+	viper.SetDefault("version_constraint", VersionConstraintMajor)
+	viper.SetDefault("output_format", OutputFormatTable)
+	viper.SetDefault("log_format", LogFormatJSON)
 	viper.SetDefault("argocd_url", "")
 	viper.SetDefault("argocd_username", "")
 	viper.SetDefault("argocd_password", "")
@@ -133,6 +155,7 @@ func Load() (*Config, error) {
 	viper.RegisterAlias("notification_channel", "notification-channel")
 	viper.RegisterAlias("version_constraint", "version-constraint")
 	viper.RegisterAlias("output_format", "output-format")
+	viper.RegisterAlias("log_format", "log-format")
 
 	// Handle labels from environment variable BEFORE unmarshal
 	// Format: AG_LABELS=key1=value1,key2=value2
@@ -163,21 +186,30 @@ func Load() (*Config, error) {
 	}
 
 	// Validate version constraint
-	if cfg.VersionConstraint != "" && cfg.VersionConstraint != "major" && cfg.VersionConstraint != "minor" && cfg.VersionConstraint != "patch" {
-		return nil, fmt.Errorf("version_constraint must be one of: 'major', 'minor', 'patch' (got: '%s')", cfg.VersionConstraint)
+	if cfg.VersionConstraint != "" && cfg.VersionConstraint != VersionConstraintMajor && cfg.VersionConstraint != VersionConstraintMinor && cfg.VersionConstraint != VersionConstraintPatch {
+		return nil, fmt.Errorf("version_constraint must be one of: '%s', '%s', '%s' (got: '%s')", VersionConstraintMajor, VersionConstraintMinor, VersionConstraintPatch, cfg.VersionConstraint)
 	}
 	// Normalize empty to "major"
 	if cfg.VersionConstraint == "" {
-		cfg.VersionConstraint = "major"
+		cfg.VersionConstraint = VersionConstraintMajor
 	}
 
 	// Validate output format
-	if cfg.OutputFormat != "" && cfg.OutputFormat != "table" && cfg.OutputFormat != "json" && cfg.OutputFormat != "markdown" {
-		return nil, fmt.Errorf("output_format must be one of: 'table', 'json', 'markdown' (got: '%s')", cfg.OutputFormat)
+	if cfg.OutputFormat != "" && cfg.OutputFormat != OutputFormatTable && cfg.OutputFormat != OutputFormatJSON && cfg.OutputFormat != OutputFormatMarkdown {
+		return nil, fmt.Errorf("output_format must be one of: '%s', '%s', '%s' (got: '%s')", OutputFormatTable, OutputFormatJSON, OutputFormatMarkdown, cfg.OutputFormat)
 	}
 	// Normalize empty to "table"
 	if cfg.OutputFormat == "" {
-		cfg.OutputFormat = "table"
+		cfg.OutputFormat = OutputFormatTable
+	}
+
+	// Validate log format
+	if cfg.LogFormat != "" && cfg.LogFormat != LogFormatJSON && cfg.LogFormat != LogFormatText {
+		return nil, fmt.Errorf("log_format must be one of: '%s', '%s' (got: '%s')", LogFormatJSON, LogFormatText, cfg.LogFormat)
+	}
+	// Normalize empty to "json"
+	if cfg.LogFormat == "" {
+		cfg.LogFormat = LogFormatJSON
 	}
 
 	// Validate notification channel settings

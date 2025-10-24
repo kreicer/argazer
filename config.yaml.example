@@ -80,6 +80,12 @@ version_constraint: "major"
 # - "markdown": Markdown formatted output for documentation
 output_format: "table"
 
+# Log Format
+# Controls the format of application logs (not the scan results)
+# - "json": Structured JSON logs for production/parsing (default)
+# - "text": Human-readable text logs for development/debugging
+log_format: "json"
+
 # Repository Authentication (optional)
 # WARNING: DO NOT store credentials here in production!
 # Use environment variables instead:

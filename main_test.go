@@ -14,14 +14,20 @@ import (
 )
 
 func TestSetupLogging(t *testing.T) {
-	t.Run("verbose mode", func(t *testing.T) {
-		logger := setupLogging(true)
+	t.Run("verbose mode with JSON", func(t *testing.T) {
+		logger := setupLogging(true, "json")
 		require.NotNil(t, logger)
 		assert.Equal(t, logrus.DebugLevel, logrus.GetLevel())
 	})
 
-	t.Run("normal mode", func(t *testing.T) {
-		logger := setupLogging(false)
+	t.Run("normal mode with JSON", func(t *testing.T) {
+		logger := setupLogging(false, "json")
+		require.NotNil(t, logger)
+		assert.Equal(t, logrus.InfoLevel, logrus.GetLevel())
+	})
+
+	t.Run("text format", func(t *testing.T) {
+		logger := setupLogging(false, "text")
 		require.NotNil(t, logger)
 		assert.Equal(t, logrus.InfoLevel, logrus.GetLevel())
 	})
@@ -309,7 +315,7 @@ func TestOutputResults_InvalidFormat(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown output format")
 }
 
-func TestOutputJSON(t *testing.T) {
+func TestRenderJSON(t *testing.T) {
 	tests := []struct {
 		name    string
 		results []ApplicationCheckResult
@@ -349,14 +355,15 @@ func TestOutputJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.NotPanics(t, func() {
-				err := outputJSON(tt.results)
+				categorized := processResults(tt.results)
+				err := renderJSON(categorized)
 				assert.NoError(t, err)
 			})
 		})
 	}
 }
 
-func TestOutputMarkdown(t *testing.T) {
+func TestRenderMarkdown(t *testing.T) {
 	tests := []struct {
 		name    string
 		results []ApplicationCheckResult
@@ -403,7 +410,8 @@ func TestOutputMarkdown(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.NotPanics(t, func() {
-				err := outputMarkdown(tt.results)
+				categorized := processResults(tt.results)
+				err := renderMarkdown(categorized)
 				assert.NoError(t, err)
 			})
 		})

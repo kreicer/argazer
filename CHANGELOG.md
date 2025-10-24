@@ -28,15 +28,46 @@ All notable changes to this project will be documented in this file.
 - **Reduced Code Duplication** - Eliminated ~160 lines of duplicated fetching/parsing logic
 - **Improved Maintainability** - Constraint logic centralized in `findLatestSemverWithConstraint`
 
+### Code Quality Improvements
+- **Refactored Output Logic** - Extracted common result processing into `processResults()` function
+  - Eliminated ~80 lines of duplicated categorization code across output formatters
+  - Renamed output functions to `renderTable()`, `renderJSON()`, `renderMarkdown()` for clarity
+  - Introduced `categorizedResults` struct for clean data flow
+  - Single source of truth for result processing logic
+- **Flexible Log Formatting** - Added configurable log format option
+  - New `--log-format` / `-l` flag with options: `json` (default), `text`
+  - New `AG_LOG_FORMAT` environment variable
+  - New `log_format` config option
+  - Text format ideal for development/debugging with human-readable output
+  - JSON format for production with structured logging
+- **Constants for Configuration Values** - Defined constants in `config` package for type safety
+  - `OutputFormatTable`, `OutputFormatJSON`, `OutputFormatMarkdown`
+  - `VersionConstraintMajor`, `VersionConstraintMinor`, `VersionConstraintPatch`
+  - `LogFormatJSON`, `LogFormatText`
+  - Reduces typos and improves IDE autocomplete
+- **Simplified Concurrency Logic** - Removed unnecessary goroutine from `checkApplicationsConcurrently()`
+  - More linear and easier to follow control flow
+  - Eliminated extra goroutine for channel closing
+- **Explicit Non-Helm App Handling** - Added clear documentation for app skipping logic
+  - Added function comments explaining empty `AppName` contract
+  - Improved code clarity with explicit skip comments
+- **Notification Message Length Constant** - Extracted `maxNotificationMessageLength` as package constant
+  - Previously hardcoded value now clearly documented
+  - Easy to adjust for different notification services
+- **Context Propagation** - Fixed unused context parameter in `initializeClients()`
+  - Improved future-proofing for cancellable operations
+  - Removed linter warning
+
 ### Documentation
 - Updated README with output format examples and usage
-- Updated `config.yaml.example` with `output_format` documentation
+- Updated `config.yaml.example` with `output_format` and `log_format` documentation
 - Added examples for all three output formats
 - Added comprehensive "Version Constraint Strategy" section to README
 - Added usage examples for all constraint modes
 - Updated `config.yaml.example` with constraint examples
 - Updated `env.example` with `AG_VERSION_CONSTRAINT`
 - Added version constraint use cases and examples
+- Added inline comments for future I/O error handling considerations
 
 ### Technical Improvements
 - Fixed viper flag-to-config mapping using RegisterAlias for proper dash-to-underscore conversion
@@ -46,6 +77,9 @@ All notable changes to this project will be documented in this file.
 - Zero linter errors
 - Clean separation of concerns between fetching and filtering logic
 - Backward compatible - defaults to `major` (all versions)
+- Improved code maintainability and readability
+- Better separation of concerns
+- Reduced code duplication by ~160 lines total
 
 ## [1.0.3] - 2025-10-21
 

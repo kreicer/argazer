@@ -55,6 +55,7 @@ It can filter by projects, application names, and labels, and send notifications
 	rootCmd.Flags().Int("concurrency", 10, "Number of concurrent workers for checking applications")
 	rootCmd.Flags().String("version-constraint", "major", "Version constraint: 'major' (all), 'minor' (same major), 'patch' (same major.minor)")
 	rootCmd.Flags().StringP("output-format", "o", "table", "Output format: 'table', 'json', or 'markdown'")
+	rootCmd.Flags().StringP("log-format", "l", "json", "Log format: 'json' or 'text'")
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
@@ -75,7 +76,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set up logging
-	logger := setupLogging(cfg.Verbose)
+	logger := setupLogging(cfg.Verbose, cfg.LogFormat)
 
 	logger.WithFields(logrus.Fields{
 		"argocd_url":   cfg.ArgocdURL,
@@ -128,7 +129,7 @@ type clients struct {
 }
 
 // initializeClients creates all required clients (ArgoCD, Helm, Notifier)
-func initializeClients(_ context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
+func initializeClients(ctx context.Context, cfg *config.Config, logger *logrus.Entry) (*clients, error) {
 	c := &clients{}
 
 	// Create authentication provider
@@ -269,10 +270,8 @@ func checkApplicationsConcurrently(ctx context.Context, apps []*v1alpha1.Applica
 	close(appChan)
 
 	// Wait for all workers to finish
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
+	wg.Wait()
+	close(resultChan)
 
 	// Collect results
 	results := make([]ApplicationCheckResult, 0, len(apps))
@@ -284,6 +283,7 @@ func checkApplicationsConcurrently(ctx context.Context, apps []*v1alpha1.Applica
 }
 
 // checkApplication checks a single application for Helm chart updates
+// Returns an ApplicationCheckResult with an empty AppName if the application should be skipped (non-Helm app)
 func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecker *helm.Checker, cfg *config.Config, logger *logrus.Entry) ApplicationCheckResult {
 	appLogger := logger.WithFields(logrus.Fields{
 		"app_name": app.Name,
@@ -296,7 +296,9 @@ func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecke
 	helmSource := findHelmSource(app, cfg.SourceName, appLogger)
 	if helmSource == nil {
 		appLogger.Debug("Application does not use Helm charts, skipping")
-		return ApplicationCheckResult{} // Return empty result, will be filtered out
+		// Return empty result with no AppName - signals to skip this app
+		// This will be filtered out during result processing
+		return ApplicationCheckResult{}
 	}
 
 	result := ApplicationCheckResult{
@@ -410,67 +412,85 @@ type scanResults struct {
 	skipped  int
 }
 
+// categorizedResults holds the processed and categorized check results
+type categorizedResults struct {
+	updatesAvailable       []ApplicationCheckResult
+	upToDateWithConstraint []ApplicationCheckResult
+	upToDateNoConstraint   []ApplicationCheckResult
+	errors                 []ApplicationCheckResult
+	stats                  scanResults
+}
+
+// processResults categorizes and processes the raw check results
+// Results with empty AppName are skipped (these are non-Helm applications)
+func processResults(results []ApplicationCheckResult) categorizedResults {
+	cat := categorizedResults{
+		stats: scanResults{},
+	}
+
+	for _, result := range results {
+		// Skip results with no AppName - these are non-Helm apps intentionally filtered out
+		if result.AppName == "" {
+			continue
+		}
+
+		cat.stats.total++
+
+		if result.Error != nil {
+			cat.stats.skipped++
+			cat.errors = append(cat.errors, result)
+		} else if result.HasUpdate {
+			cat.stats.updates++
+			cat.updatesAvailable = append(cat.updatesAvailable, result)
+		} else {
+			cat.stats.upToDate++
+			if result.HasUpdateOutsideConstraint {
+				cat.upToDateWithConstraint = append(cat.upToDateWithConstraint, result)
+			} else {
+				cat.upToDateNoConstraint = append(cat.upToDateNoConstraint, result)
+			}
+		}
+	}
+
+	return cat
+}
+
 // outputResults displays the results to console in the specified format
 func outputResults(results []ApplicationCheckResult, format string) error {
+	categorized := processResults(results)
+
 	switch format {
-	case "json":
-		return outputJSON(results)
-	case "markdown":
-		return outputMarkdown(results)
-	case "table":
-		return outputTable(results)
+	case config.OutputFormatJSON:
+		return renderJSON(categorized)
+	case config.OutputFormatMarkdown:
+		return renderMarkdown(categorized)
+	case config.OutputFormatTable:
+		return renderTable(categorized)
 	default:
 		return fmt.Errorf("unknown output format: %s", format)
 	}
 }
 
-// outputTable displays results in a formatted table (original format)
-func outputTable(results []ApplicationCheckResult) error {
-	// Calculate stats in a single loop
-	stats := scanResults{}
-	var updatesAvailable []ApplicationCheckResult
-	var upToDateWithConstraint []ApplicationCheckResult
-	var errors []ApplicationCheckResult
-
-	for _, result := range results {
-		// Skip empty results (non-Helm apps)
-		if result.AppName == "" {
-			continue
-		}
-
-		stats.total++
-
-		if result.Error != nil {
-			stats.skipped++
-			errors = append(errors, result)
-		} else if result.HasUpdate {
-			stats.updates++
-			updatesAvailable = append(updatesAvailable, result)
-		} else {
-			stats.upToDate++
-			// Track apps that are up to date but have updates outside constraint
-			if result.HasUpdateOutsideConstraint {
-				upToDateWithConstraint = append(upToDateWithConstraint, result)
-			}
-		}
-	}
-
+// renderTable displays results in a formatted table (original format)
+// Note: fmt.Printf errors are not checked as they are rare for stdout in CLI context.
+// For maximum robustness, consider refactoring to use io.Writer with explicit error checking.
+func renderTable(cat categorizedResults) error {
 	// Display summary
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	fmt.Println("ARGAZER SCAN RESULTS")
 	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("\nTotal applications checked: %d\n\n", stats.total)
-	fmt.Printf("Up to date: %d\n", stats.upToDate)
-	fmt.Printf("Updates available: %d\n", stats.updates)
-	fmt.Printf("Skipped: %d\n\n", stats.skipped)
+	fmt.Printf("\nTotal applications checked: %d\n\n", cat.stats.total)
+	fmt.Printf("Up to date: %d\n", cat.stats.upToDate)
+	fmt.Printf("Updates available: %d\n", cat.stats.updates)
+	fmt.Printf("Skipped: %d\n\n", cat.stats.skipped)
 
 	// Display updates
-	if stats.updates > 0 {
+	if cat.stats.updates > 0 {
 		fmt.Println(strings.Repeat("-", 80))
 		fmt.Println("APPLICATIONS WITH UPDATES AVAILABLE:")
 		fmt.Println(strings.Repeat("-", 80))
 
-		for _, result := range updatesAvailable {
+		for _, result := range cat.updatesAvailable {
 			fmt.Printf("\nApplication: %s\n", result.AppName)
 			fmt.Printf("  Project: %s\n", result.Project)
 			fmt.Printf("  Chart: %s\n", result.ChartName)
@@ -487,12 +507,12 @@ func outputTable(results []ApplicationCheckResult) error {
 	}
 
 	// Display apps that are up to date but have updates outside constraint
-	if len(upToDateWithConstraint) > 0 {
+	if len(cat.upToDateWithConstraint) > 0 {
 		fmt.Println("\n" + strings.Repeat("-", 80))
 		fmt.Println("UP TO DATE (with updates outside constraint):")
 		fmt.Println(strings.Repeat("-", 80))
 
-		for _, result := range upToDateWithConstraint {
+		for _, result := range cat.upToDateWithConstraint {
 			fmt.Printf("\nApplication: %s\n", result.AppName)
 			fmt.Printf("  Project: %s\n", result.Project)
 			fmt.Printf("  Chart: %s\n", result.ChartName)
@@ -506,12 +526,12 @@ func outputTable(results []ApplicationCheckResult) error {
 	}
 
 	// Display skipped applications
-	if stats.skipped > 0 {
+	if cat.stats.skipped > 0 {
 		fmt.Println("\n" + strings.Repeat("-", 80))
 		fmt.Println("APPLICATIONS SKIPPED (Unable to check):")
 		fmt.Println(strings.Repeat("-", 80))
 
-		for _, result := range errors {
+		for _, result := range cat.errors {
 			fmt.Printf("\nApplication: %s\n", result.AppName)
 			fmt.Printf("  Project: %s\n", result.Project)
 			fmt.Printf("  Chart: %s\n", result.ChartName)
@@ -524,39 +544,8 @@ func outputTable(results []ApplicationCheckResult) error {
 	return nil
 }
 
-// outputJSON displays results in JSON format
-func outputJSON(results []ApplicationCheckResult) error {
-	// Calculate stats in a single loop
-	stats := scanResults{}
-	var updatesAvailable []ApplicationCheckResult
-	var upToDateWithConstraint []ApplicationCheckResult
-	var upToDateNoConstraint []ApplicationCheckResult
-	var errors []ApplicationCheckResult
-
-	for _, result := range results {
-		// Skip empty results (non-Helm apps)
-		if result.AppName == "" {
-			continue
-		}
-
-		stats.total++
-
-		if result.Error != nil {
-			stats.skipped++
-			errors = append(errors, result)
-		} else if result.HasUpdate {
-			stats.updates++
-			updatesAvailable = append(updatesAvailable, result)
-		} else {
-			stats.upToDate++
-			if result.HasUpdateOutsideConstraint {
-				upToDateWithConstraint = append(upToDateWithConstraint, result)
-			} else {
-				upToDateNoConstraint = append(upToDateNoConstraint, result)
-			}
-		}
-	}
-
+// renderJSON displays results in JSON format
+func renderJSON(cat categorizedResults) error {
 	// Create JSON output structure
 	type JSONOutput struct {
 		Summary struct {
@@ -572,16 +561,16 @@ func outputJSON(results []ApplicationCheckResult) error {
 	}
 
 	output := JSONOutput{
-		UpdatesAvailable:        updatesAvailable,
-		UpToDateWithConstraint:  upToDateWithConstraint,
-		UpToDateNoUpdateOutside: upToDateNoConstraint,
-		Errors:                  errors,
+		UpdatesAvailable:        cat.updatesAvailable,
+		UpToDateWithConstraint:  cat.upToDateWithConstraint,
+		UpToDateNoUpdateOutside: cat.upToDateNoConstraint,
+		Errors:                  cat.errors,
 	}
 
-	output.Summary.Total = stats.total
-	output.Summary.UpToDate = stats.upToDate
-	output.Summary.UpdatesAvailable = stats.updates
-	output.Summary.Skipped = stats.skipped
+	output.Summary.Total = cat.stats.total
+	output.Summary.UpToDate = cat.stats.upToDate
+	output.Summary.UpdatesAvailable = cat.stats.updates
+	output.Summary.Skipped = cat.stats.skipped
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -592,53 +581,26 @@ func outputJSON(results []ApplicationCheckResult) error {
 	return nil
 }
 
-// outputMarkdown displays results in Markdown format
-func outputMarkdown(results []ApplicationCheckResult) error {
-	// Calculate stats in a single loop
-	stats := scanResults{}
-	var updatesAvailable []ApplicationCheckResult
-	var upToDateWithConstraint []ApplicationCheckResult
-	var errors []ApplicationCheckResult
-
-	for _, result := range results {
-		// Skip empty results (non-Helm apps)
-		if result.AppName == "" {
-			continue
-		}
-
-		stats.total++
-
-		if result.Error != nil {
-			stats.skipped++
-			errors = append(errors, result)
-		} else if result.HasUpdate {
-			stats.updates++
-			updatesAvailable = append(updatesAvailable, result)
-		} else {
-			stats.upToDate++
-			// Track apps that are up to date but have updates outside constraint
-			if result.HasUpdateOutsideConstraint {
-				upToDateWithConstraint = append(upToDateWithConstraint, result)
-			}
-		}
-	}
-
+// renderMarkdown displays results in Markdown format
+// Note: fmt.Printf errors are not checked as they are rare for stdout in CLI context.
+// For maximum robustness, consider refactoring to use io.Writer with explicit error checking.
+func renderMarkdown(cat categorizedResults) error {
 	// Display summary
 	fmt.Println("# Argazer Scan Results")
 	fmt.Println()
 	fmt.Println("## Summary")
 	fmt.Println()
-	fmt.Printf("- **Total applications checked:** %d\n", stats.total)
-	fmt.Printf("- **Up to date:** %d\n", stats.upToDate)
-	fmt.Printf("- **Updates available:** %d\n", stats.updates)
-	fmt.Printf("- **Skipped:** %d\n\n", stats.skipped)
+	fmt.Printf("- **Total applications checked:** %d\n", cat.stats.total)
+	fmt.Printf("- **Up to date:** %d\n", cat.stats.upToDate)
+	fmt.Printf("- **Updates available:** %d\n", cat.stats.updates)
+	fmt.Printf("- **Skipped:** %d\n\n", cat.stats.skipped)
 
 	// Display updates
-	if stats.updates > 0 {
+	if cat.stats.updates > 0 {
 		fmt.Println("## Applications with Updates Available")
 		fmt.Println()
 
-		for _, result := range updatesAvailable {
+		for _, result := range cat.updatesAvailable {
 			fmt.Printf("### %s\n\n", result.AppName)
 			fmt.Printf("| Field | Value |\n")
 			fmt.Printf("|-------|-------|\n")
@@ -657,11 +619,11 @@ func outputMarkdown(results []ApplicationCheckResult) error {
 	}
 
 	// Display apps that are up to date but have updates outside constraint
-	if len(upToDateWithConstraint) > 0 {
+	if len(cat.upToDateWithConstraint) > 0 {
 		fmt.Println("## Up to Date (with updates outside constraint)")
 		fmt.Println()
 
-		for _, result := range upToDateWithConstraint {
+		for _, result := range cat.upToDateWithConstraint {
 			fmt.Printf("### %s\n\n", result.AppName)
 			fmt.Printf("| Field | Value |\n")
 			fmt.Printf("|-------|-------|\n")
@@ -677,11 +639,11 @@ func outputMarkdown(results []ApplicationCheckResult) error {
 	}
 
 	// Display skipped applications
-	if stats.skipped > 0 {
+	if cat.stats.skipped > 0 {
 		fmt.Println("## Applications Skipped")
 		fmt.Println()
 
-		for _, result := range errors {
+		for _, result := range cat.errors {
 			fmt.Printf("### %s\n\n", result.AppName)
 			fmt.Printf("| Field | Value |\n")
 			fmt.Printf("|-------|-------|\n")
@@ -731,10 +693,13 @@ func sendNotifications(ctx context.Context, notifier notification.Notifier, resu
 	return nil
 }
 
+// Notification message length constant (based on Telegram's 4096 character limit)
+const maxNotificationMessageLength = 3900 // Leave some room for headers and safety margin
+
 // buildNotificationMessages builds notification message(s), splitting if needed for length limits
 // Telegram has a 4096 character limit per message
 func buildNotificationMessages(updates []ApplicationCheckResult) []string {
-	const maxMessageLength = 3900 // Leave some room for headers and safety margin
+	maxMessageLength := maxNotificationMessageLength
 
 	// Build individual app update strings
 	var appMessages []string
@@ -807,15 +772,21 @@ func buildNotificationMessages(updates []ApplicationCheckResult) []string {
 }
 
 // setupLogging configures the logging system
-func setupLogging(verbose bool) *logrus.Entry {
+func setupLogging(verbose bool, format string) *logrus.Entry {
 	if verbose {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
 		logrus.SetLevel(logrus.InfoLevel)
 	}
 
-	// Use JSON logging format
-	logrus.SetFormatter(&logrus.JSONFormatter{})
+	// Set formatter based on configuration
+	if format == config.LogFormatText {
+		logrus.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	} else {
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	}
 
 	// Return a base logger entry
 	return logrus.WithField("service", "argazer")

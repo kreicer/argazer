@@ -10,13 +10,13 @@
 
 - **Single-run execution** - Runs once on launch, perfect for CI/CD or cron jobs
 - **Multiple output formats** - Table (human-readable), JSON (programmatic), or Markdown (documentation)
+- **Flexible logging** - JSON (production) or text (development) log formats
 - **OCI Registry Support** - Works with OCI-based Helm repositories (Harbor, GHCR, ACR, etc.)
 - **Traditional Helm Repos** - Supports classic HTTP-based Helm chart repositories
 - **Flexible filtering** - Filter by projects, application names, and labels
 - **Multiple notification channels** - Telegram, Email, Slack, Microsoft Teams, Generic Webhooks, or console-only output
 - **Secure ArgoCD connection** - Username/password authentication with optional TLS verification
 - **Environment variable support** - All settings configurable via AG_* environment variables
-- **Structured JSON logging** - All logs output in JSON format for easy parsing and integration
 - **Graceful error handling** - Clear error messages for unsupported scenarios
 - **Multi-source support** - Handles ArgoCD applications with multiple Helm sources
 
@@ -111,6 +111,12 @@ version_constraint: "major"
 # - "json": JSON structured output for automation
 # - "markdown": Markdown formatted output for docs
 output_format: "table"
+
+# Log Format
+# Controls the format of application logs (not scan results):
+# - "json": Structured JSON logs for production (default)
+# - "text": Human-readable text logs for development
+log_format: "json"
 ```
 
 ### Environment Variables
@@ -164,6 +170,9 @@ export AG_VERSION_CONSTRAINT="major"  # "major", "minor", or "patch"
 
 # Output Format
 export AG_OUTPUT_FORMAT="table"  # "table", "json", or "markdown"
+
+# Log Format
+export AG_LOG_FORMAT="json"  # "json" or "text"
 ```
 
 ## ArgoCD RBAC Setup
