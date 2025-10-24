@@ -164,10 +164,12 @@ func TestOutputResults(t *testing.T) {
 	tests := []struct {
 		name    string
 		results []ApplicationCheckResult
+		formats []string
 	}{
 		{
 			name:    "empty results",
 			results: []ApplicationCheckResult{},
+			formats: []string{"table", "json", "markdown"},
 		},
 		{
 			name: "all up to date",
@@ -182,6 +184,7 @@ func TestOutputResults(t *testing.T) {
 					HasUpdate:      false,
 				},
 			},
+			formats: []string{"table", "json", "markdown"},
 		},
 		{
 			name: "with updates",
@@ -196,6 +199,7 @@ func TestOutputResults(t *testing.T) {
 					HasUpdate:      true,
 				},
 			},
+			formats: []string{"table", "json", "markdown"},
 		},
 		{
 			name: "with errors",
@@ -208,6 +212,7 @@ func TestOutputResults(t *testing.T) {
 					Error:     assert.AnError,
 				},
 			},
+			formats: []string{"table", "json", "markdown"},
 		},
 		{
 			name: "mixed results",
@@ -238,6 +243,7 @@ func TestOutputResults(t *testing.T) {
 					Error:     assert.AnError,
 				},
 			},
+			formats: []string{"table", "json", "markdown"},
 		},
 		{
 			name: "empty app names (non-helm apps)",
@@ -255,14 +261,150 @@ func TestOutputResults(t *testing.T) {
 					HasUpdate:      false,
 				},
 			},
+			formats: []string{"table", "json", "markdown"},
+		},
+		{
+			name: "with constraint info",
+			results: []ApplicationCheckResult{
+				{
+					AppName:                    "app1",
+					Project:                    "default",
+					ChartName:                  "chart1",
+					CurrentVersion:             "1.0.0",
+					LatestVersion:              "1.0.0",
+					RepoURL:                    "https://charts.example.com",
+					HasUpdate:                  false,
+					ConstraintApplied:          "minor",
+					HasUpdateOutsideConstraint: true,
+					LatestVersionAll:           "2.0.0",
+				},
+			},
+			formats: []string{"table", "json", "markdown"},
+		},
+	}
+
+	for _, tt := range tests {
+		for _, format := range tt.formats {
+			t.Run(tt.name+"_"+format, func(t *testing.T) {
+				// Just ensure it doesn't panic
+				assert.NotPanics(t, func() {
+					err := outputResults(tt.results, format)
+					assert.NoError(t, err)
+				})
+			})
+		}
+	}
+}
+
+func TestOutputResults_InvalidFormat(t *testing.T) {
+	results := []ApplicationCheckResult{
+		{
+			AppName: "test",
+			Project: "default",
+		},
+	}
+
+	err := outputResults(results, "invalid")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown output format")
+}
+
+func TestOutputJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []ApplicationCheckResult
+	}{
+		{
+			name:    "empty results",
+			results: []ApplicationCheckResult{},
+		},
+		{
+			name: "with updates and up-to-date",
+			results: []ApplicationCheckResult{
+				{
+					AppName:        "app1",
+					Project:        "default",
+					ChartName:      "chart1",
+					CurrentVersion: "1.0.0",
+					LatestVersion:  "2.0.0",
+					RepoURL:        "https://charts.example.com",
+					HasUpdate:      true,
+				},
+				{
+					AppName:                    "app2",
+					Project:                    "default",
+					ChartName:                  "chart2",
+					CurrentVersion:             "1.0.0",
+					LatestVersion:              "1.0.0",
+					RepoURL:                    "https://charts.example.com",
+					HasUpdate:                  false,
+					HasUpdateOutsideConstraint: true,
+					LatestVersionAll:           "2.0.0",
+					ConstraintApplied:          "minor",
+				},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Just ensure it doesn't panic
 			assert.NotPanics(t, func() {
-				outputResults(tt.results, "table")
+				err := outputJSON(tt.results)
+				assert.NoError(t, err)
+			})
+		})
+	}
+}
+
+func TestOutputMarkdown(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []ApplicationCheckResult
+	}{
+		{
+			name:    "empty results",
+			results: []ApplicationCheckResult{},
+		},
+		{
+			name: "with all sections",
+			results: []ApplicationCheckResult{
+				{
+					AppName:        "app1",
+					Project:        "default",
+					ChartName:      "chart1",
+					CurrentVersion: "1.0.0",
+					LatestVersion:  "2.0.0",
+					RepoURL:        "https://charts.example.com",
+					HasUpdate:      true,
+				},
+				{
+					AppName:                    "app2",
+					Project:                    "default",
+					ChartName:                  "chart2",
+					CurrentVersion:             "1.0.0",
+					LatestVersion:              "1.0.0",
+					RepoURL:                    "https://charts.example.com",
+					HasUpdate:                  false,
+					HasUpdateOutsideConstraint: true,
+					LatestVersionAll:           "2.0.0",
+					ConstraintApplied:          "minor",
+				},
+				{
+					AppName:   "app3",
+					Project:   "default",
+					ChartName: "chart3",
+					RepoURL:   "https://charts.example.com",
+					Error:     assert.AnError,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NotPanics(t, func() {
+				err := outputMarkdown(tt.results)
+				assert.NoError(t, err)
 			})
 		})
 	}
