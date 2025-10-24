@@ -1,6 +1,10 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
+# Build arguments for multi-architecture support
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
 
@@ -16,8 +20,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build the application with optimizations for the target architecture
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \
     -o argazer .
