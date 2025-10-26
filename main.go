@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	cmdpkg "argazer/cmd"
 	"argazer/internal/argocd"
 	"argazer/internal/auth"
 	"argazer/internal/config"
@@ -42,6 +46,9 @@ It can filter by projects, application names, and labels, and send notifications
 			fmt.Printf("argazer version %s (commit: %s)\n", version, commit)
 		},
 	})
+
+	// Add configure command
+	rootCmd.AddCommand(cmdpkg.NewConfigureCmd())
 
 	// Add flags
 	rootCmd.Flags().StringP("config", "c", "", "Configuration file path")
@@ -87,7 +94,9 @@ func run(cmd *cobra.Command, args []string) error {
 		"version":      version,
 	}).Info("Starting Argazer")
 
-	ctx := context.Background()
+	// Set up context with signal handling for graceful shutdown
+	ctx, cancel := setupSignalHandler(logger)
+	defer cancel()
 
 	// Initialize clients
 	clients, err := initializeClients(ctx, cfg, logger)
@@ -105,7 +114,7 @@ func run(cmd *cobra.Command, args []string) error {
 	results := checkApplicationsConcurrently(ctx, apps, clients.helm, cfg, logger)
 
 	// Output results to console
-	if err := outputResults(results, cfg.OutputFormat); err != nil {
+	if err := outputResults(results, cfg.OutputFormat, os.Stdout); err != nil {
 		return fmt.Errorf("failed to output results: %w", err)
 	}
 
@@ -231,7 +240,7 @@ type ApplicationCheckResult struct {
 	LatestVersion              string `json:"latest_version"`
 	RepoURL                    string `json:"repo_url"`
 	HasUpdate                  bool   `json:"has_update"`
-	Error                      error  `json:"error,omitempty"`
+	Error                      string `json:"error,omitempty"`               // Changed from error to string for proper JSON serialization
 	ConstraintApplied          string `json:"constraint_applied"`            // Version constraint used: "major", "minor", or "patch"
 	HasUpdateOutsideConstraint bool   `json:"has_update_outside_constraint"` // True if updates exist outside the constraint
 	LatestVersionAll           string `json:"latest_version_all,omitempty"`  // Latest version without constraint (if different)
@@ -296,23 +305,30 @@ func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecke
 	// Find Helm source
 	helmSource := findHelmSource(app, cfg.SourceName, appLogger)
 	if helmSource == nil {
-		appLogger.Debug("Application does not use Helm charts, skipping")
+		appLogger.Info("Application does not use Helm charts, skipping")
 		// Return empty result with no AppName - signals to skip this app
 		// This will be filtered out during result processing
 		return ApplicationCheckResult{}
 	}
 
+	// Determine chart name: for Helm repos use Chart field, for Git repos use Path
+	chartName := helmSource.Chart
+	if chartName == "" && helmSource.Path != "" {
+		// Git-based Helm source - use the path as chart name
+		chartName = helmSource.Path
+	}
+
 	result := ApplicationCheckResult{
 		AppName:           app.Name,
 		Project:           app.Spec.Project,
-		ChartName:         helmSource.Chart,
+		ChartName:         chartName,
 		CurrentVersion:    helmSource.TargetRevision,
 		RepoURL:           helmSource.RepoURL,
 		ConstraintApplied: cfg.VersionConstraint,
 	}
 
 	appLogger = appLogger.WithFields(logrus.Fields{
-		"chart_name":    helmSource.Chart,
+		"chart_name":    chartName,
 		"chart_version": helmSource.TargetRevision,
 		"repo_url":      helmSource.RepoURL,
 		"constraint":    cfg.VersionConstraint,
@@ -324,13 +340,13 @@ func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecke
 	constraintResult, err := helmChecker.GetLatestVersionWithConstraint(
 		ctx,
 		helmSource.RepoURL,
-		helmSource.Chart,
+		chartName,
 		helmSource.TargetRevision,
 		cfg.VersionConstraint,
 	)
 	if err != nil {
 		appLogger.WithError(err).Error("Failed to check Helm version")
-		result.Error = err
+		result.Error = err.Error()
 		return result
 	}
 
@@ -363,8 +379,21 @@ func checkApplication(ctx context.Context, app *v1alpha1.Application, helmChecke
 
 // findHelmSource finds the Helm source in an ArgoCD application
 func findHelmSource(app *v1alpha1.Application, sourceName string, logger *logrus.Entry) *v1alpha1.ApplicationSource {
+	// Helper function to check if a source is Helm-based
+	isHelmSource := func(source *v1alpha1.ApplicationSource) bool {
+		// Check if it's a Helm repository source (has Chart field)
+		if source.Chart != "" {
+			return true
+		}
+		// Check if it's a Git repository with Helm (has Helm parameters)
+		if source.Helm != nil {
+			return true
+		}
+		return false
+	}
+
 	// Check if it's a single source application with Helm
-	if app.Spec.Source != nil && app.Spec.Source.Chart != "" {
+	if app.Spec.Source != nil && isHelmSource(app.Spec.Source) {
 		return app.Spec.Source
 	}
 
@@ -375,7 +404,7 @@ func findHelmSource(app *v1alpha1.Application, sourceName string, logger *logrus
 			for i := range app.Spec.Sources {
 				source := &app.Spec.Sources[i]
 				// Match by name AND ensure it's a Helm chart
-				if source.Name == sourceName && source.Chart != "" {
+				if source.Name == sourceName && isHelmSource(source) {
 					logger.WithFields(logrus.Fields{
 						"app":         app.Name,
 						"source_name": source.Name,
@@ -390,7 +419,7 @@ func findHelmSource(app *v1alpha1.Application, sourceName string, logger *logrus
 		// Fallback: find any Helm source
 		for i := range app.Spec.Sources {
 			source := &app.Spec.Sources[i]
-			if source.Chart != "" {
+			if isHelmSource(source) {
 				logger.WithFields(logrus.Fields{
 					"app":         app.Name,
 					"source_name": source.Name,
@@ -437,7 +466,7 @@ func processResults(results []ApplicationCheckResult) categorizedResults {
 
 		cat.stats.total++
 
-		if result.Error != nil {
+		if result.Error != "" {
 			cat.stats.skipped++
 			cat.errors = append(cat.errors, result)
 		} else if result.HasUpdate {
@@ -457,96 +486,96 @@ func processResults(results []ApplicationCheckResult) categorizedResults {
 }
 
 // outputResults displays the results to console in the specified format
-func outputResults(results []ApplicationCheckResult, format string) error {
+func outputResults(results []ApplicationCheckResult, format string, w io.Writer) error {
 	categorized := processResults(results)
 
 	switch format {
 	case config.OutputFormatJSON:
-		return renderJSON(categorized)
+		return renderJSON(categorized, w)
 	case config.OutputFormatMarkdown:
-		return renderMarkdown(categorized)
+		return renderMarkdown(categorized, w)
 	case config.OutputFormatTable:
-		return renderTable(categorized)
+		return renderTable(categorized, w)
 	default:
 		return fmt.Errorf("unknown output format: %s", format)
 	}
 }
 
 // renderTable displays results in a formatted table (original format)
-// Note: fmt.Printf errors are not checked as they are rare for stdout in CLI context.
-// For maximum robustness, consider refactoring to use io.Writer with explicit error checking.
-func renderTable(cat categorizedResults) error {
+func renderTable(cat categorizedResults, w io.Writer) error {
 	// Display summary
-	fmt.Println("\n" + strings.Repeat("=", 80))
-	fmt.Println("ARGAZER SCAN RESULTS")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("\nTotal applications checked: %d\n\n", cat.stats.total)
-	fmt.Printf("Up to date: %d\n", cat.stats.upToDate)
-	fmt.Printf("Updates available: %d\n", cat.stats.updates)
-	fmt.Printf("Skipped: %d\n\n", cat.stats.skipped)
+	if _, err := fmt.Fprintln(w, "\n"+strings.Repeat("=", 80)); err != nil {
+		return fmt.Errorf("failed to write table: %w", err)
+	}
+	fmt.Fprintln(w, "ARGAZER SCAN RESULTS")
+	fmt.Fprintln(w, strings.Repeat("=", 80))
+	fmt.Fprintf(w, "\nTotal applications checked: %d\n\n", cat.stats.total)
+	fmt.Fprintf(w, "Up to date: %d\n", cat.stats.upToDate)
+	fmt.Fprintf(w, "Updates available: %d\n", cat.stats.updates)
+	fmt.Fprintf(w, "Skipped: %d\n\n", cat.stats.skipped)
 
 	// Display updates
 	if cat.stats.updates > 0 {
-		fmt.Println(strings.Repeat("-", 80))
-		fmt.Println("APPLICATIONS WITH UPDATES AVAILABLE:")
-		fmt.Println(strings.Repeat("-", 80))
+		fmt.Fprintln(w, strings.Repeat("-", 80))
+		fmt.Fprintln(w, "APPLICATIONS WITH UPDATES AVAILABLE:")
+		fmt.Fprintln(w, strings.Repeat("-", 80))
 
 		for _, result := range cat.updatesAvailable {
-			fmt.Printf("\nApplication: %s\n", result.AppName)
-			fmt.Printf("  Project: %s\n", result.Project)
-			fmt.Printf("  Chart: %s\n", result.ChartName)
-			fmt.Printf("  Current Version: %s\n", result.CurrentVersion)
-			fmt.Printf("  Latest Version: %s\n", result.LatestVersion)
+			fmt.Fprintf(w, "\nApplication: %s\n", result.AppName)
+			fmt.Fprintf(w, "  Project: %s\n", result.Project)
+			fmt.Fprintf(w, "  Chart: %s\n", result.ChartName)
+			fmt.Fprintf(w, "  Current Version: %s\n", result.CurrentVersion)
+			fmt.Fprintf(w, "  Latest Version: %s\n", result.LatestVersion)
 			if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
-				fmt.Printf("  Version Constraint: %s\n", result.ConstraintApplied)
+				fmt.Fprintf(w, "  Version Constraint: %s\n", result.ConstraintApplied)
 			}
 			if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" {
-				fmt.Printf("  Note: Version %s available outside constraint\n", result.LatestVersionAll)
+				fmt.Fprintf(w, "  Note: Version %s available outside constraint\n", result.LatestVersionAll)
 			}
-			fmt.Printf("  Repository: %s\n", result.RepoURL)
+			fmt.Fprintf(w, "  Repository: %s\n", result.RepoURL)
 		}
 	}
 
 	// Display apps that are up to date but have updates outside constraint
 	if len(cat.upToDateWithConstraint) > 0 {
-		fmt.Println("\n" + strings.Repeat("-", 80))
-		fmt.Println("UP TO DATE (with updates outside constraint):")
-		fmt.Println(strings.Repeat("-", 80))
+		fmt.Fprintln(w, "\n"+strings.Repeat("-", 80))
+		fmt.Fprintln(w, "UP TO DATE (with updates outside constraint):")
+		fmt.Fprintln(w, strings.Repeat("-", 80))
 
 		for _, result := range cat.upToDateWithConstraint {
-			fmt.Printf("\nApplication: %s\n", result.AppName)
-			fmt.Printf("  Project: %s\n", result.Project)
-			fmt.Printf("  Chart: %s\n", result.ChartName)
-			fmt.Printf("  Current Version: %s\n", result.CurrentVersion)
-			fmt.Printf("  Status: Up to date within '%s' constraint\n", result.ConstraintApplied)
+			fmt.Fprintf(w, "\nApplication: %s\n", result.AppName)
+			fmt.Fprintf(w, "  Project: %s\n", result.Project)
+			fmt.Fprintf(w, "  Chart: %s\n", result.ChartName)
+			fmt.Fprintf(w, "  Current Version: %s\n", result.CurrentVersion)
+			fmt.Fprintf(w, "  Status: Up to date within '%s' constraint\n", result.ConstraintApplied)
 			if result.LatestVersionAll != "" {
-				fmt.Printf("  Note: Version %s available outside constraint\n", result.LatestVersionAll)
+				fmt.Fprintf(w, "  Note: Version %s available outside constraint\n", result.LatestVersionAll)
 			}
-			fmt.Printf("  Repository: %s\n", result.RepoURL)
+			fmt.Fprintf(w, "  Repository: %s\n", result.RepoURL)
 		}
 	}
 
 	// Display skipped applications
 	if cat.stats.skipped > 0 {
-		fmt.Println("\n" + strings.Repeat("-", 80))
-		fmt.Println("APPLICATIONS SKIPPED (Unable to check):")
-		fmt.Println(strings.Repeat("-", 80))
+		fmt.Fprintln(w, "\n"+strings.Repeat("-", 80))
+		fmt.Fprintln(w, "APPLICATIONS SKIPPED (Unable to check):")
+		fmt.Fprintln(w, strings.Repeat("-", 80))
 
 		for _, result := range cat.errors {
-			fmt.Printf("\nApplication: %s\n", result.AppName)
-			fmt.Printf("  Project: %s\n", result.Project)
-			fmt.Printf("  Chart: %s\n", result.ChartName)
-			fmt.Printf("  Repository: %s\n", result.RepoURL)
-			fmt.Printf("  Reason: %s\n", result.Error.Error())
+			fmt.Fprintf(w, "\nApplication: %s\n", result.AppName)
+			fmt.Fprintf(w, "  Project: %s\n", result.Project)
+			fmt.Fprintf(w, "  Chart: %s\n", result.ChartName)
+			fmt.Fprintf(w, "  Repository: %s\n", result.RepoURL)
+			fmt.Fprintf(w, "  Reason: %s\n", result.Error)
 		}
 	}
 
-	fmt.Println("\n" + strings.Repeat("=", 80) + "\n")
+	fmt.Fprintln(w, "\n"+strings.Repeat("=", 80)+"\n")
 	return nil
 }
 
 // renderJSON displays results in JSON format
-func renderJSON(cat categorizedResults) error {
+func renderJSON(cat categorizedResults, w io.Writer) error {
 	// Create JSON output structure
 	type JSONOutput struct {
 		Summary struct {
@@ -573,7 +602,7 @@ func renderJSON(cat categorizedResults) error {
 	output.Summary.UpdatesAvailable = cat.stats.updates
 	output.Summary.Skipped = cat.stats.skipped
 
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(output); err != nil {
 		return fmt.Errorf("failed to encode JSON: %w", err)
@@ -583,75 +612,75 @@ func renderJSON(cat categorizedResults) error {
 }
 
 // renderMarkdown displays results in Markdown format
-// Note: fmt.Printf errors are not checked as they are rare for stdout in CLI context.
-// For maximum robustness, consider refactoring to use io.Writer with explicit error checking.
-func renderMarkdown(cat categorizedResults) error {
+func renderMarkdown(cat categorizedResults, w io.Writer) error {
 	// Display summary
-	fmt.Println("# Argazer Scan Results")
-	fmt.Println()
-	fmt.Println("## Summary")
-	fmt.Println()
-	fmt.Printf("- **Total applications checked:** %d\n", cat.stats.total)
-	fmt.Printf("- **Up to date:** %d\n", cat.stats.upToDate)
-	fmt.Printf("- **Updates available:** %d\n", cat.stats.updates)
-	fmt.Printf("- **Skipped:** %d\n\n", cat.stats.skipped)
+	if _, err := fmt.Fprintln(w, "# Argazer Scan Results"); err != nil {
+		return fmt.Errorf("failed to write markdown: %w", err)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "## Summary")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "- **Total applications checked:** %d\n", cat.stats.total)
+	fmt.Fprintf(w, "- **Up to date:** %d\n", cat.stats.upToDate)
+	fmt.Fprintf(w, "- **Updates available:** %d\n", cat.stats.updates)
+	fmt.Fprintf(w, "- **Skipped:** %d\n\n", cat.stats.skipped)
 
 	// Display updates
 	if cat.stats.updates > 0 {
-		fmt.Println("## Applications with Updates Available")
-		fmt.Println()
+		fmt.Fprintln(w, "## Applications with Updates Available")
+		fmt.Fprintln(w)
 
 		for _, result := range cat.updatesAvailable {
-			fmt.Printf("### %s\n\n", result.AppName)
-			fmt.Printf("| Field | Value |\n")
-			fmt.Printf("|-------|-------|\n")
-			fmt.Printf("| **Project** | %s |\n", result.Project)
-			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
-			fmt.Printf("| **Current Version** | %s |\n", result.CurrentVersion)
-			fmt.Printf("| **Latest Version** | %s |\n", result.LatestVersion)
+			fmt.Fprintf(w, "### %s\n\n", result.AppName)
+			fmt.Fprintf(w, "| Field | Value |\n")
+			fmt.Fprintf(w, "|-------|-------|\n")
+			fmt.Fprintf(w, "| **Project** | %s |\n", result.Project)
+			fmt.Fprintf(w, "| **Chart** | %s |\n", result.ChartName)
+			fmt.Fprintf(w, "| **Current Version** | %s |\n", result.CurrentVersion)
+			fmt.Fprintf(w, "| **Latest Version** | %s |\n", result.LatestVersion)
 			if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
-				fmt.Printf("| **Version Constraint** | %s |\n", result.ConstraintApplied)
+				fmt.Fprintf(w, "| **Version Constraint** | %s |\n", result.ConstraintApplied)
 			}
 			if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" {
-				fmt.Printf("| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
+				fmt.Fprintf(w, "| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
 			}
-			fmt.Printf("| **Repository** | %s |\n\n", result.RepoURL)
+			fmt.Fprintf(w, "| **Repository** | %s |\n\n", result.RepoURL)
 		}
 	}
 
 	// Display apps that are up to date but have updates outside constraint
 	if len(cat.upToDateWithConstraint) > 0 {
-		fmt.Println("## Up to Date (with updates outside constraint)")
-		fmt.Println()
+		fmt.Fprintln(w, "## Up to Date (with updates outside constraint)")
+		fmt.Fprintln(w)
 
 		for _, result := range cat.upToDateWithConstraint {
-			fmt.Printf("### %s\n\n", result.AppName)
-			fmt.Printf("| Field | Value |\n")
-			fmt.Printf("|-------|-------|\n")
-			fmt.Printf("| **Project** | %s |\n", result.Project)
-			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
-			fmt.Printf("| **Current Version** | %s |\n", result.CurrentVersion)
-			fmt.Printf("| **Status** | Up to date within '%s' constraint |\n", result.ConstraintApplied)
+			fmt.Fprintf(w, "### %s\n\n", result.AppName)
+			fmt.Fprintf(w, "| Field | Value |\n")
+			fmt.Fprintf(w, "|-------|-------|\n")
+			fmt.Fprintf(w, "| **Project** | %s |\n", result.Project)
+			fmt.Fprintf(w, "| **Chart** | %s |\n", result.ChartName)
+			fmt.Fprintf(w, "| **Current Version** | %s |\n", result.CurrentVersion)
+			fmt.Fprintf(w, "| **Status** | Up to date within '%s' constraint |\n", result.ConstraintApplied)
 			if result.LatestVersionAll != "" {
-				fmt.Printf("| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
+				fmt.Fprintf(w, "| **Latest Version (all)** | %s |\n", result.LatestVersionAll)
 			}
-			fmt.Printf("| **Repository** | %s |\n\n", result.RepoURL)
+			fmt.Fprintf(w, "| **Repository** | %s |\n\n", result.RepoURL)
 		}
 	}
 
 	// Display skipped applications
 	if cat.stats.skipped > 0 {
-		fmt.Println("## Applications Skipped")
-		fmt.Println()
+		fmt.Fprintln(w, "## Applications Skipped")
+		fmt.Fprintln(w)
 
 		for _, result := range cat.errors {
-			fmt.Printf("### %s\n\n", result.AppName)
-			fmt.Printf("| Field | Value |\n")
-			fmt.Printf("|-------|-------|\n")
-			fmt.Printf("| **Project** | %s |\n", result.Project)
-			fmt.Printf("| **Chart** | %s |\n", result.ChartName)
-			fmt.Printf("| **Repository** | %s |\n", result.RepoURL)
-			fmt.Printf("| **Error** | %s |\n\n", result.Error.Error())
+			fmt.Fprintf(w, "### %s\n\n", result.AppName)
+			fmt.Fprintf(w, "| Field | Value |\n")
+			fmt.Fprintf(w, "|-------|-------|\n")
+			fmt.Fprintf(w, "| **Project** | %s |\n", result.Project)
+			fmt.Fprintf(w, "| **Chart** | %s |\n", result.ChartName)
+			fmt.Fprintf(w, "| **Repository** | %s |\n", result.RepoURL)
+			fmt.Fprintf(w, "| **Error** | %s |\n\n", result.Error)
 		}
 	}
 
@@ -673,8 +702,25 @@ func sendNotifications(ctx context.Context, notifier notification.Notifier, resu
 		return nil
 	}
 
-	// Build notification messages (may be split if too long)
-	messages := buildNotificationMessages(updatesAvailable)
+	// Convert to notification format
+	var updates []notification.ApplicationUpdate
+	for _, result := range updatesAvailable {
+		updates = append(updates, notification.ApplicationUpdate{
+			AppName:                    result.AppName,
+			Project:                    result.Project,
+			ChartName:                  result.ChartName,
+			CurrentVersion:             result.CurrentVersion,
+			LatestVersion:              result.LatestVersion,
+			RepoURL:                    result.RepoURL,
+			ConstraintApplied:          result.ConstraintApplied,
+			HasUpdateOutsideConstraint: result.HasUpdateOutsideConstraint,
+			LatestVersionAll:           result.LatestVersionAll,
+		})
+	}
+
+	// Build notification messages using the formatter
+	formatter := notification.NewMessageFormatter()
+	messages := formatter.FormatMessages(updates)
 
 	logger.WithField("message_count", len(messages)).Info("Sending notifications")
 
@@ -692,84 +738,6 @@ func sendNotifications(ctx context.Context, notifier notification.Notifier, resu
 
 	logger.Info("Successfully sent all notifications")
 	return nil
-}
-
-// Notification message length constant (based on Telegram's 4096 character limit)
-const maxNotificationMessageLength = 3900 // Leave some room for headers and safety margin
-
-// buildNotificationMessages builds notification message(s), splitting if needed for length limits
-// Telegram has a 4096 character limit per message
-func buildNotificationMessages(updates []ApplicationCheckResult) []string {
-	maxMessageLength := maxNotificationMessageLength
-
-	// Build individual app update strings
-	var appMessages []string
-	for _, result := range updates {
-		var app strings.Builder
-		// Compact format: app name as header with project
-		app.WriteString(fmt.Sprintf("%s (%s)\n", result.AppName, result.Project))
-		app.WriteString(fmt.Sprintf("  Chart: %s\n", result.ChartName))
-		app.WriteString(fmt.Sprintf("  Version: %s -> %s\n", result.CurrentVersion, result.LatestVersion))
-		// Show constraint if not "major" (default)
-		if result.ConstraintApplied != "major" && result.ConstraintApplied != "" {
-			app.WriteString(fmt.Sprintf("  Constraint: %s\n", result.ConstraintApplied))
-		}
-		// Show note if updates exist outside constraint
-		if result.HasUpdateOutsideConstraint && result.LatestVersionAll != "" && result.LatestVersionAll != result.LatestVersion {
-			app.WriteString(fmt.Sprintf("  Note: v%s available outside constraint\n", result.LatestVersionAll))
-		}
-		app.WriteString(fmt.Sprintf("  Repo: %s\n", result.RepoURL))
-		app.WriteString("\n")
-		appMessages = append(appMessages, app.String())
-	}
-
-	// Build header (empty for first message, apps only)
-	header := ""
-
-	// Check if we can fit everything in one message
-	totalLength := len(header)
-	for _, msg := range appMessages {
-		totalLength += len(msg)
-	}
-
-	if totalLength <= maxMessageLength {
-		// Everything fits in one message
-		var message strings.Builder
-		message.WriteString(header)
-		for _, msg := range appMessages {
-			message.WriteString(msg)
-		}
-		return []string{message.String()}
-	}
-
-	// Need to split into multiple messages
-	var messages []string
-	var currentMessage strings.Builder
-	currentLength := 0
-
-	// First message gets the header
-	currentMessage.WriteString(header)
-	currentLength = len(header)
-
-	for _, appMsg := range appMessages {
-		// Check if adding this app would exceed the limit
-		if currentLength+len(appMsg) > maxMessageLength {
-			// Save current message and start a new one
-			messages = append(messages, currentMessage.String())
-			currentMessage.Reset()
-			currentLength = 0
-		}
-
-		currentMessage.WriteString(appMsg)
-		currentLength += len(appMsg)
-	}
-
-	// Add the last message if it has content
-	if currentLength > 0 {
-		messages = append(messages, currentMessage.String())
-	}
-
-	return messages
 }
 
 // setupLogging configures the logging system
@@ -791,4 +759,21 @@ func setupLogging(verbose bool, format string) *logrus.Entry {
 
 	// Return a base logger entry
 	return logrus.WithField("service", "argazer")
+}
+
+// setupSignalHandler creates a context that is cancelled on SIGINT or SIGTERM
+// This allows for graceful shutdown of the application
+func setupSignalHandler(logger *logrus.Entry) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		sig := <-signalChan
+		logger.WithField("signal", sig.String()).Info("Received shutdown signal, initiating graceful shutdown...")
+		cancel()
+	}()
+
+	return ctx, cancel
 }

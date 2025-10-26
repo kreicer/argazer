@@ -38,6 +38,7 @@ Thumbs.db
 
 # Configuration files with secrets
 config.yaml
+config_bkp.yaml
 .env
 
 # Log files

@@ -86,7 +86,29 @@ type RepositoryAuth struct {
 
 // Load loads configuration from various sources
 func Load() (*Config, error) {
-	// Set defaults for all config fields so AutomaticEnv can find them
+	setDefaults()
+
+	if err := loadConfigFile(); err != nil {
+		return nil, err
+	}
+
+	setupEnvironment()
+	registerFlagAliases()
+
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if err := validateConfig(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// setDefaults sets default values for all configuration fields
+func setDefaults() {
 	// Boolean and numeric defaults
 	viper.SetDefault("verbose", false)
 	viper.SetDefault("argocd_insecure", false)
@@ -121,41 +143,46 @@ func Load() (*Config, error) {
 	// Map defaults
 	viper.SetDefault("labels", map[string]string{})
 	viper.SetDefault("repository_auth", []RepositoryAuth{})
+}
 
-	// Set config file name and paths
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("/etc/argazer")
-	viper.AddConfigPath("$HOME/.argazer")
-
-	// Read config file if it exists
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("error reading config file: %w", err)
+// loadConfigFile loads configuration from file (if specified or found in default paths)
+func loadConfigFile() error {
+	// Check if a specific config file was provided via --config flag
+	configFile := viper.GetString("config")
+	if configFile != "" {
+		// Use the specified config file
+		viper.SetConfigFile(configFile)
+		if err := viper.ReadInConfig(); err != nil {
+			return fmt.Errorf("error reading config file %s: %w", configFile, err)
 		}
-		// Config file not found, continue with defaults and env vars
+	} else {
+		// Set config file name and paths for default locations
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+		viper.AddConfigPath(".")
+		viper.AddConfigPath("/etc/argazer")
+		viper.AddConfigPath("$HOME/.argazer")
+
+		// Read config file if it exists
+		if err := viper.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return fmt.Errorf("error reading config file: %w", err)
+			}
+			// Config file not found, continue with defaults and env vars
+		}
 	}
 
+	return nil
+}
+
+// setupEnvironment configures environment variable handling
+func setupEnvironment() {
 	// Set up environment variable prefix and replacer
 	// AutomaticEnv() automatically binds all config fields to environment variables
 	// with the AG_ prefix (e.g., AG_ARGOCD_URL maps to argocd_url)
 	viper.SetEnvPrefix("AG")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv()
-
-	// Register aliases to map config keys (with underscores) to flag names (with dashes)
-	// RegisterAlias(alias, key) makes the alias name point to the key
-	// When unmarshal looks for "argocd_url", it will find the value stored under "argocd-url"
-	viper.RegisterAlias("argocd_url", "argocd-url")
-	viper.RegisterAlias("argocd_username", "argocd-username")
-	viper.RegisterAlias("argocd_password", "argocd-password")
-	viper.RegisterAlias("argocd_insecure", "argocd-insecure")
-	viper.RegisterAlias("app_names", "app-names")
-	viper.RegisterAlias("notification_channel", "notification-channel")
-	viper.RegisterAlias("version_constraint", "version-constraint")
-	viper.RegisterAlias("output_format", "output-format")
-	viper.RegisterAlias("log_format", "log-format")
 
 	// Handle labels from environment variable BEFORE unmarshal
 	// Format: AG_LABELS=key1=value1,key2=value2
@@ -168,26 +195,39 @@ func Load() (*Config, error) {
 			viper.Set("labels", labelsMap)
 		}
 	}
+}
 
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
+// registerFlagAliases registers aliases to map config keys (with underscores) to flag names (with dashes)
+func registerFlagAliases() {
+	// RegisterAlias(alias, key) makes the alias name point to the key
+	// When unmarshal looks for "argocd_url", it will find the value stored under "argocd-url"
+	viper.RegisterAlias("argocd_url", "argocd-url")
+	viper.RegisterAlias("argocd_username", "argocd-username")
+	viper.RegisterAlias("argocd_password", "argocd-password")
+	viper.RegisterAlias("argocd_insecure", "argocd-insecure")
+	viper.RegisterAlias("app_names", "app-names")
+	viper.RegisterAlias("notification_channel", "notification-channel")
+	viper.RegisterAlias("version_constraint", "version-constraint")
+	viper.RegisterAlias("output_format", "output-format")
+	viper.RegisterAlias("log_format", "log-format")
+}
 
+// validateConfig validates the loaded configuration
+func validateConfig(cfg *Config) error {
 	// Validate required fields
 	if cfg.ArgocdURL == "" {
-		return nil, fmt.Errorf("argocd_url is required")
+		return fmt.Errorf("argocd_url is required")
 	}
 	if cfg.ArgocdUsername == "" {
-		return nil, fmt.Errorf("argocd_username is required")
+		return fmt.Errorf("argocd_username is required")
 	}
 	if cfg.ArgocdPassword == "" {
-		return nil, fmt.Errorf("argocd_password is required")
+		return fmt.Errorf("argocd_password is required")
 	}
 
 	// Validate version constraint
 	if cfg.VersionConstraint != "" && cfg.VersionConstraint != VersionConstraintMajor && cfg.VersionConstraint != VersionConstraintMinor && cfg.VersionConstraint != VersionConstraintPatch {
-		return nil, fmt.Errorf("version_constraint must be one of: '%s', '%s', '%s' (got: '%s')", VersionConstraintMajor, VersionConstraintMinor, VersionConstraintPatch, cfg.VersionConstraint)
+		return fmt.Errorf("version_constraint must be one of: '%s', '%s', '%s' (got: '%s')", VersionConstraintMajor, VersionConstraintMinor, VersionConstraintPatch, cfg.VersionConstraint)
 	}
 	// Normalize empty to "major"
 	if cfg.VersionConstraint == "" {
@@ -196,7 +236,7 @@ func Load() (*Config, error) {
 
 	// Validate output format
 	if cfg.OutputFormat != "" && cfg.OutputFormat != OutputFormatTable && cfg.OutputFormat != OutputFormatJSON && cfg.OutputFormat != OutputFormatMarkdown {
-		return nil, fmt.Errorf("output_format must be one of: '%s', '%s', '%s' (got: '%s')", OutputFormatTable, OutputFormatJSON, OutputFormatMarkdown, cfg.OutputFormat)
+		return fmt.Errorf("output_format must be one of: '%s', '%s', '%s' (got: '%s')", OutputFormatTable, OutputFormatJSON, OutputFormatMarkdown, cfg.OutputFormat)
 	}
 	// Normalize empty to "table"
 	if cfg.OutputFormat == "" {
@@ -205,7 +245,7 @@ func Load() (*Config, error) {
 
 	// Validate log format
 	if cfg.LogFormat != "" && cfg.LogFormat != LogFormatJSON && cfg.LogFormat != LogFormatText {
-		return nil, fmt.Errorf("log_format must be one of: '%s', '%s' (got: '%s')", LogFormatJSON, LogFormatText, cfg.LogFormat)
+		return fmt.Errorf("log_format must be one of: '%s', '%s' (got: '%s')", LogFormatJSON, LogFormatText, cfg.LogFormat)
 	}
 	// Normalize empty to "json"
 	if cfg.LogFormat == "" {
@@ -216,36 +256,36 @@ func Load() (*Config, error) {
 	switch cfg.NotificationChannel {
 	case "telegram":
 		if cfg.TelegramWebhook == "" {
-			return nil, fmt.Errorf("telegram_webhook is required when notification_channel is 'telegram'")
+			return fmt.Errorf("telegram_webhook is required when notification_channel is 'telegram'")
 		}
 		if cfg.TelegramChatID == "" {
-			return nil, fmt.Errorf("telegram_chat_id is required when notification_channel is 'telegram'")
+			return fmt.Errorf("telegram_chat_id is required when notification_channel is 'telegram'")
 		}
 	case "email":
 		if cfg.EmailSmtpHost == "" {
-			return nil, fmt.Errorf("email_smtp_host is required when notification_channel is 'email'")
+			return fmt.Errorf("email_smtp_host is required when notification_channel is 'email'")
 		}
 		if cfg.EmailFrom == "" {
-			return nil, fmt.Errorf("email_from is required when notification_channel is 'email'")
+			return fmt.Errorf("email_from is required when notification_channel is 'email'")
 		}
 		if len(cfg.EmailTo) == 0 {
-			return nil, fmt.Errorf("email_to is required when notification_channel is 'email'")
+			return fmt.Errorf("email_to is required when notification_channel is 'email'")
 		}
 	case "slack":
 		if cfg.SlackWebhook == "" {
-			return nil, fmt.Errorf("slack_webhook is required when notification_channel is 'slack'")
+			return fmt.Errorf("slack_webhook is required when notification_channel is 'slack'")
 		}
 	case "teams":
 		if cfg.TeamsWebhook == "" {
-			return nil, fmt.Errorf("teams_webhook is required when notification_channel is 'teams'")
+			return fmt.Errorf("teams_webhook is required when notification_channel is 'teams'")
 		}
 	case "webhook":
 		if cfg.WebhookURL == "" {
-			return nil, fmt.Errorf("webhook_url is required when notification_channel is 'webhook'")
+			return fmt.Errorf("webhook_url is required when notification_channel is 'webhook'")
 		}
 	}
 
-	return &cfg, nil
+	return nil
 }
 
 // parseLabelsFromString parses a comma-separated key=value string into a map

@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2025-10-26
+
+### Added
+- **Git Repository Support** - Full support for Git-based Helm chart repositories
+  - Automatic detection of Git URLs (github.com, gitlab.com, bitbucket.org, etc.)
+  - HTTPS authentication support for private repositories
+  - Version detection from Git tags (semver)
+  - Support for monorepo chart structures
+  - Full version constraint support (major/minor/patch)
+- **Interactive Configure Command** - New `argazer configure` command for easy setup
+  - Step-by-step interactive wizard
+  - Configure ArgoCD connection with validation
+  - Select and configure notification channels
+  - Set version constraints and output preferences
+  - Test notification before saving configuration
+  - Saves configuration to config.yaml
+  - User-friendly prompts with contextual help
+- **Retry Mechanism for Notifications** - HTTP-based notifiers now automatically retry failed requests
+  - 3 retry attempts with exponential backoff (1s, 2s, 4s)
+  - Retries on network errors, 5xx server errors, and 429 rate limits
+  - Includes jitter to prevent thundering herd
+  - Respects context cancellation
+- **Graceful Shutdown** - Clean application shutdown on SIGINT/SIGTERM signals
+  - Context cancellation propagated to all operations
+  - In-flight operations complete gracefully
+  - Proper resource cleanup
+
+### Changed
+- **Repository Type Support** - Checker now supports three repository types: Traditional Helm, OCI, and Git
+- **Enhanced Authentication** - Authentication provider now used for Git repositories
+- **Improved Repository Detection** - Better automatic detection of repository types
+- **Fixed Config File Flag** - `--config` flag now properly loads specified configuration files
+- **Better Error Handling** - Error messages now properly serialize in JSON output
+- **Improved Output Functions** - Output renderers refactored for better testability and maintainability
+
+### Code Quality Improvements
+Following a comprehensive code review, several internal improvements were made:
+- Refactored config loading into focused helper functions
+- Improved type safety in configure command (using structs vs maps)
+- Moved notification formatting to dedicated package
+- Enhanced output functions with `io.Writer` parameter
+- Better code organization and separation of concerns
+- Improved test coverage and reliability
+
+### Technical Details
+- New dependencies: `go-git/go-git/v5` for Git operations, `AlecAivazis/survey/v2` for interactive prompts
+- New files: `internal/helm/git.go`, `cmd/configure.go`, `internal/notification/formatter.go`
+- Added signal handling with `os/signal` and `syscall` packages
+- HTTP clients now have explicit timeouts and retry logic
+- All tests passing with improved coverage
+
 ## [1.0.4] - 2025-10-24
 
 ### Added

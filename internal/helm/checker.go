@@ -18,6 +18,7 @@ import (
 type Checker struct {
 	httpClient   *http.Client
 	ociChecker   *OCIChecker
+	gitClient    *GitClient
 	authProvider *auth.Provider
 	logger       *logrus.Entry
 }
@@ -29,6 +30,7 @@ func NewChecker(authProvider *auth.Provider, logger *logrus.Entry) (*Checker, er
 			Timeout: 30 * time.Second,
 		},
 		ociChecker:   NewOCIChecker(authProvider, logger.WithField("type", "oci")),
+		gitClient:    NewGitClient("", "", logger.WithField("type", "git")), // Auth will be set per-request if needed
 		authProvider: authProvider,
 		logger:       logger,
 	}, nil
@@ -36,6 +38,23 @@ func NewChecker(authProvider *auth.Provider, logger *logrus.Entry) (*Checker, er
 
 // GetLatestVersion gets the latest version of a Helm chart from a repository
 func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName string) (string, error) {
+	// Check if this is a Git repository
+	if isGitURL(repoURL) {
+		c.logger.WithFields(logrus.Fields{
+			"repo":  repoURL,
+			"chart": chartName,
+		}).Info("Detected Git repository, using Git checker")
+
+		// Get auth credentials for this repo if available
+		if auth := c.authProvider.GetCredentials(repoURL); auth != nil {
+			c.gitClient.username = auth.Username
+			c.gitClient.password = auth.Password
+		}
+
+		// Use chartName as the path within the repo
+		return c.gitClient.GetLatestVersion(ctx, repoURL, chartName)
+	}
+
 	// Check if this is an OCI repository (no http/https prefix)
 	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
 		c.logger.WithFields(logrus.Fields{
@@ -49,6 +68,30 @@ func (c *Checker) GetLatestVersion(ctx context.Context, repoURL, chartName strin
 
 // GetLatestVersionWithConstraint gets the latest version respecting the version constraint
 func (c *Checker) GetLatestVersionWithConstraint(ctx context.Context, repoURL, chartName, currentVersion, constraint string) (*VersionConstraintResult, error) {
+	// Check if this is a Git repository
+	if isGitURL(repoURL) {
+		c.logger.WithFields(logrus.Fields{
+			"repo":       repoURL,
+			"chart":      chartName,
+			"constraint": constraint,
+		}).Info("Detected Git repository, using Git checker with constraint")
+
+		// Get auth credentials for this repo if available
+		if auth := c.authProvider.GetCredentials(repoURL); auth != nil {
+			c.gitClient.username = auth.Username
+			c.gitClient.password = auth.Password
+		}
+
+		// Get all versions from Git tags
+		versions, err := c.gitClient.GetAllVersions(ctx, repoURL, chartName)
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply constraint logic
+		return findLatestSemverWithConstraint(versions, currentVersion, constraint, c.logger)
+	}
+
 	// Check if this is an OCI repository (no http/https prefix)
 	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
 		c.logger.WithFields(logrus.Fields{

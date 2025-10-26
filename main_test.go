@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"argazer/internal/config"
+	"argazer/internal/notification"
 
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	"github.com/sirupsen/logrus"
@@ -215,7 +217,7 @@ func TestOutputResults(t *testing.T) {
 					Project:   "default",
 					ChartName: "chart1",
 					RepoURL:   "https://charts.example.com",
-					Error:     assert.AnError,
+					Error:     "test error",
 				},
 			},
 			formats: []string{"table", "json", "markdown"},
@@ -246,7 +248,7 @@ func TestOutputResults(t *testing.T) {
 					Project:   "dev",
 					ChartName: "chart3",
 					RepoURL:   "https://charts.example.com",
-					Error:     assert.AnError,
+					Error:     "test error",
 				},
 			},
 			formats: []string{"table", "json", "markdown"},
@@ -294,7 +296,7 @@ func TestOutputResults(t *testing.T) {
 			t.Run(tt.name+"_"+format, func(t *testing.T) {
 				// Just ensure it doesn't panic
 				assert.NotPanics(t, func() {
-					err := outputResults(tt.results, format)
+					err := outputResults(tt.results, format, io.Discard)
 					assert.NoError(t, err)
 				})
 			})
@@ -310,7 +312,7 @@ func TestOutputResults_InvalidFormat(t *testing.T) {
 		},
 	}
 
-	err := outputResults(results, "invalid")
+	err := outputResults(results, "invalid", io.Discard)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown output format")
 }
@@ -356,7 +358,7 @@ func TestRenderJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				categorized := processResults(tt.results)
-				err := renderJSON(categorized)
+				err := renderJSON(categorized, io.Discard)
 				assert.NoError(t, err)
 			})
 		})
@@ -401,7 +403,7 @@ func TestRenderMarkdown(t *testing.T) {
 					Project:   "default",
 					ChartName: "chart3",
 					RepoURL:   "https://charts.example.com",
-					Error:     assert.AnError,
+					Error:     "test error",
 				},
 			},
 		},
@@ -411,7 +413,7 @@ func TestRenderMarkdown(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				categorized := processResults(tt.results)
-				err := renderMarkdown(categorized)
+				err := renderMarkdown(categorized, io.Discard)
 				assert.NoError(t, err)
 			})
 		})
@@ -477,7 +479,24 @@ func TestBuildNotificationMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			messages := buildNotificationMessages(tt.updates)
+			// Convert to notification format
+			var updates []notification.ApplicationUpdate
+			for _, result := range tt.updates {
+				updates = append(updates, notification.ApplicationUpdate{
+					AppName:                    result.AppName,
+					Project:                    result.Project,
+					ChartName:                  result.ChartName,
+					CurrentVersion:             result.CurrentVersion,
+					LatestVersion:              result.LatestVersion,
+					RepoURL:                    result.RepoURL,
+					ConstraintApplied:          result.ConstraintApplied,
+					HasUpdateOutsideConstraint: result.HasUpdateOutsideConstraint,
+					LatestVersionAll:           result.LatestVersionAll,
+				})
+			}
+
+			formatter := notification.NewMessageFormatter()
+			messages := formatter.FormatMessages(updates)
 			assert.GreaterOrEqual(t, len(messages), tt.minMessages)
 			assert.LessOrEqual(t, len(messages), tt.maxMessages)
 
@@ -533,7 +552,7 @@ func TestApplicationCheckResult(t *testing.T) {
 		LatestVersion:  "2.0.0",
 		RepoURL:        "https://charts.example.com",
 		HasUpdate:      true,
-		Error:          nil,
+		Error:          "",
 	}
 
 	assert.Equal(t, "test-app", result.AppName)
@@ -542,7 +561,7 @@ func TestApplicationCheckResult(t *testing.T) {
 	assert.Equal(t, "1.0.0", result.CurrentVersion)
 	assert.Equal(t, "2.0.0", result.LatestVersion)
 	assert.True(t, result.HasUpdate)
-	assert.Nil(t, result.Error)
+	assert.Empty(t, result.Error)
 }
 
 func TestScanResults(t *testing.T) {
@@ -570,9 +589,9 @@ func TestClients(t *testing.T) {
 
 func TestBuildNotificationMessages_LongMessages(t *testing.T) {
 	// Create many updates to force message splitting
-	var updates []ApplicationCheckResult
+	var updates []notification.ApplicationUpdate
 	for i := 0; i < 100; i++ {
-		updates = append(updates, ApplicationCheckResult{
+		updates = append(updates, notification.ApplicationUpdate{
 			AppName:        "very-long-application-name-that-takes-space",
 			Project:        "production-project-with-long-name",
 			ChartName:      "chart-with-very-descriptive-name",
@@ -582,7 +601,8 @@ func TestBuildNotificationMessages_LongMessages(t *testing.T) {
 		})
 	}
 
-	messages := buildNotificationMessages(updates)
+	formatter := notification.NewMessageFormatter()
+	messages := formatter.FormatMessages(updates)
 
 	// Should split into multiple messages
 	assert.Greater(t, len(messages), 1, "Should split large number of updates into multiple messages")

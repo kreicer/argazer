@@ -11,6 +11,8 @@
 - **Single-run execution** - Runs once on launch, perfect for CI/CD or cron jobs
 - **Multiple output formats** - Table (human-readable), JSON (programmatic), or Markdown (documentation)
 - **Flexible logging** - JSON (production) or text (development) log formats
+- **Interactive configuration** - `argazer configure` command with step-by-step wizard
+- **Git Repository Support** - Monitor Helm charts stored in Git repositories (GitHub, GitLab, Bitbucket, etc.)
 - **OCI Registry Support** - Works with OCI-based Helm repositories (Harbor, GHCR, ACR, etc.)
 - **Traditional Helm Repos** - Supports classic HTTP-based Helm chart repositories
 - **Flexible filtering** - Filter by projects, application names, and labels
@@ -220,6 +222,21 @@ For project-specific access, replace `*/*` with `<project-name>/*` in the RBAC p
 
 ## Usage
 
+### Quick Start with Interactive Configuration
+
+The easiest way to get started is with the interactive configuration wizard:
+
+```bash
+./argazer configure
+```
+
+This will guide you through:
+1. ArgoCD connection setup
+2. Application filtering
+3. Version constraint preferences
+4. Notification channel setup (with test!)
+5. Saving configuration to config.yaml
+
 ### Basic Usage
 
 ```bash
@@ -417,7 +434,26 @@ docker-compose up
 
 ## Supported Repository Types
 
-Argazer automatically detects and supports both traditional Helm repositories and OCI registries:
+Argazer automatically detects and supports three types of Helm chart repositories:
+
+### Git Repositories 🆕
+Git-based repositories containing Helm charts (detects GitHub, GitLab, Bitbucket, Gitea):
+```yaml
+repoURL: "https://github.com/myorg/helm-charts.git"
+chart: "charts/myapp"  # Path to chart within repo
+
+repoURL: "https://gitlab.com/myorg/charts.git"
+chart: "frontend"  # Chart directory name
+```
+
+**Version Detection:**
+- Reads versions from Git tags (e.g., `v1.2.3`, `chart-v1.0.0`)
+- Supports semver tags with common prefixes
+- For monorepos: Use chart-specific tags like `myapp-v1.2.3`
+
+**Authentication:**
+- HTTPS with username/password
+- Configure via `repository_auth` or environment variables
 
 ### Traditional Helm Repositories
 Classic HTTP-based Helm chart repositories with `index.yaml`:
