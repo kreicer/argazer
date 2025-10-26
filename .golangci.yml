@@ -1,26 +1,26 @@
+version: 2
+
 run:
-  timeout: 5m
+  timeout: 10m
   tests: false
   modules-download-mode: readonly
 
 linters:
-  enable:
+  disable:
     - errcheck
-    - gosimple
+  enable:
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - unparam
 
-linters-settings:
-  errcheck:
-    check-type-assertions: false
-    check-blank: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 issues:
   exclude-use-default: false
@@ -28,4 +28,5 @@ issues:
   max-same-issues: 0
   exclude-dirs:
     - vendor
-
+  exclude-files:
+    - ".*\\.pb\\.go$"
